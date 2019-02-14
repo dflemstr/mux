@@ -10,7 +10,6 @@ extern crate tokio;
 
 use std::io;
 use std::process;
-use std::sync;
 
 mod args;
 mod options;
@@ -23,20 +22,11 @@ fn main() -> Result<(), failure::Error> {
 
     let options = options::Options::from_args();
 
-    let result = sync::Arc::new(sync::Mutex::new(None));
-    tokio::run_async(run_safe(options, result.clone()));
-
-    let mut maybe_result = result.lock().unwrap();
-    (*maybe_result)
-        .take()
-        .expect("execution aborted due to panic")
-}
-
-async fn run_safe(
-    options: options::Options,
-    result: sync::Arc<sync::Mutex<Option<Result<(), failure::Error>>>>,
-) {
-    *result.lock().unwrap() = Some(await!(run(options)));
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on_all(tokio_async_await::compat::backward::Compat::new(run(
+        options,
+    )))?;
+    Ok(())
 }
 
 async fn run(options: options::Options) -> Result<(), failure::Error> {
@@ -57,7 +47,14 @@ async fn run(options: options::Options) -> Result<(), failure::Error> {
 
     let command = options.command;
 
-    let mut child_processes = args
+    struct ManagedProcess {
+        index: usize,
+        input_kill_trigger: stream_cancel::Trigger,
+        input_tx: tokio::sync::mpsc::UnboundedSender<bytes::Bytes>,
+        child_process: tokio_process::Child,
+    }
+
+    let managed_processes = args
         .into_iter()
         .enumerate()
         .map(move |(index, args)| {
@@ -67,31 +64,42 @@ async fn run(options: options::Options) -> Result<(), failure::Error> {
                 .stdin(process::Stdio::piped())
                 .spawn_async()?;
 
-            let stdin_sink = if let Some(stdin) = child_process.stdin().take() {
-                let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+            let stdin = child_process.stdin().take().unwrap();
+            let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
 
-                let (trigger, input_rx) = stream_cancel::Valved::new(input_rx);
+            let (input_kill_trigger, input_rx) = stream_cancel::Valved::new(input_rx);
 
-                let stdin_sink =
-                    tokio::codec::FramedWrite::new(stdin, tokio::codec::BytesCodec::new());
+            let stdin_sink = tokio::codec::FramedWrite::new(stdin, tokio::codec::BytesCodec::new());
 
-                tokio::spawn(
-                    input_rx
-                        .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, format!("failed to read from stdin queue: {:?}", e)))
-                        .forward(stdin_sink)
-                        .map_err(move |e| {
-                            error!(
-                                "failed to forward stdin broadcast queue to process {}: {}",
-                                index, e
-                            )
-                        })
-                        .map(move |_| debug!("stopped stdin broadcast queue to process {} forwarder", index)),
-                );
+            tokio::spawn(
+                input_rx
+                    .map_err(move |_| {
+                        io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            format!("failed to read from stdin queue for process {}", index),
+                        )
+                    })
+                    .forward(stdin_sink)
+                    .map_err(move |e| {
+                        error!(
+                            "failed to forward stdin broadcast queue to process {}: {}",
+                            index, e
+                        )
+                    })
+                    .map(move |_| {
+                        debug!(
+                            "stopped stdin broadcast queue to process {} forwarder",
+                            index
+                        )
+                    }),
+            );
 
-                Some((trigger, input_tx))
-            } else { None };
-
-            Ok((stdin_sink, child_process))
+            Ok(ManagedProcess {
+                index,
+                input_kill_trigger,
+                input_tx,
+                child_process,
+            })
         })
         .collect::<Result<Vec<_>, failure::Error>>()?;
 
@@ -100,24 +108,38 @@ async fn run(options: options::Options) -> Result<(), failure::Error> {
         tokio::codec::BytesCodec::new(),
     ));
 
-    let stdin_sinks = child_processes.iter_mut().flat_map(|(stdin_sink, _)| stdin_sink.take()).collect::<Vec<_>>();
+    let (process_handles, input_txs) = managed_processes
+        .into_iter()
+        .map(|p| ((p.index, p.input_kill_trigger, p.child_process), p.input_tx))
+        .unzip::<_, _, Vec<_>, Vec<_>>();
 
     tokio::spawn(
         stdin_source
             .map(|b| b.freeze())
-            .fold(stdin_sinks, |stdin_sinks, b| {
-                futures::future::join_all(stdin_sinks.into_iter().map(move |s| s.send(b.clone())))
-                    .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, format!("failed to write to stdin queue: {:?}", e)))
+            .fold(input_txs, |input_txs, b| {
+                futures::future::join_all(input_txs.into_iter().map(move |s| s.send(b.clone())))
+                    .map_err(|_| {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "failed to write to stdin queue")
+                    })
             })
             .map_err(move |e| error!("failed to forward stdin to broadcast queue: {}", e))
             .map(|_| debug!("stopped stdin to broadcast queue forwarder")),
     );
 
-    await!(futures::future::join_all(child_processes.into_iter().map(|(_, c)| c)))?;
+    let child_triggers = await!(futures::future::join_all(process_handles.into_iter().map(
+        |(i, t, c)| c.map(move |x| {
+            debug!("process {} exited with {}", i, x);
+            t
+        })
+    )))?;
 
-    debug!("all processes finished");
+    for child_trigger in child_triggers {
+        drop(child_trigger);
+    }
 
     drop(trigger);
+
+    debug!("all processes finished");
 
     Ok(())
 }
