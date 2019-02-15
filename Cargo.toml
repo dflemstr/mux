@@ -18,7 +18,8 @@ futures = "0.1.25"
 log = "0.4.6"
 libc = "0.2.48"
 tokio-async-await = "0.1.5"
-stream-cancel = "0.4.4"
+termion = "1.5.1"
+tokio-threadpool = "0.1.11"
 
 [profile.release]
 lto = true
