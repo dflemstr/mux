@@ -8,10 +8,6 @@ extern crate structopt;
 #[macro_use]
 extern crate tokio;
 
-#[cfg(target_os = "redox")]
-#[path = "sys/redox/mod.rs"]
-mod sys;
-
 #[cfg(unix)]
 #[path = "sys/unix/mod.rs"]
 mod sys;
@@ -24,7 +20,8 @@ mod pty;
 mod tty;
 
 enum Event {
-    Term(termion::event::Event),
+    Mouse(termion::event::MouseEvent),
+    Data(bytes::Bytes),
 }
 
 fn main() {
@@ -42,28 +39,31 @@ fn run() -> Result<(), failure::Error> {
 
     let options = options::Options::from_args();
 
-    let cache_dir = dirs::cache_dir().expect("no suitable cache dir found").join("mux");
-    fs::create_dir_all(&cache_dir)?;
+    if let Some(mut log) = dirs::cache_dir() {
+        log.push("mux");
+        fs::create_dir_all(&log)?;
+        log.push("session.log");
 
-    fern::Dispatch::new()
-        .level(match options.log_verbose {
-            0 => log::LevelFilter::Error,
-            1 => log::LevelFilter::Warn,
-            2 => log::LevelFilter::Info,
-            3 => log::LevelFilter::Debug,
-            _ => log::LevelFilter::Trace,
-        })
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "{}[{}][{}] {}",
-                chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
-                record.target(),
-                record.level(),
-                message
-            ))
-        })
-        .chain(fern::log_file(cache_dir.join("session.log"))?)
-        .apply()?;
+        fern::Dispatch::new()
+            .level(match options.log_verbose {
+                0 => log::LevelFilter::Error,
+                1 => log::LevelFilter::Warn,
+                2 => log::LevelFilter::Info,
+                3 => log::LevelFilter::Debug,
+                _ => log::LevelFilter::Trace,
+            })
+            .format(|out, message, record| {
+                out.finish(format_args!(
+                    "{}[{}][{}] {}",
+                    chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+                    record.target(),
+                    record.level(),
+                    message
+                ))
+            })
+            .chain(fern::log_file(&log)?)
+            .apply()?;
+    }
 
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on_all(tokio_async_await::compat::backward::Compat::new(
@@ -79,7 +79,7 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
     let args = await!(args::read(&mut options))?;
     let command = options.command;
 
-    let mut managed_processes = args
+    let mut processes = args
         .into_iter()
         .enumerate()
         .map(move |(index, args)| process::Process::spawn(index, command.clone(), args))
@@ -91,15 +91,15 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
     let mut terminal = await!(create_terminal(tty_output))?;
     terminal.hide_cursor()?;
 
-    let (input_source, events) = await!(spawn_input(tty_input))?;
+    let events = read_events(tty_input)?;
 
-    spawn_stdin_forwarder(&mut managed_processes, input_source);
+    let stdin = run_gui(&mut processes, terminal, events);
 
-    spawn_gui(&mut managed_processes, terminal, events);
+    await!(forward_stdin(&mut processes, stdin))?;
 
-    let exit_statuses_future = futures::future::join_all(managed_processes.into_iter().map(|p| {
+    let exit_statuses_future = futures::future::join_all(processes.into_iter().map(|p| {
         let i = p.index;
-        p.child_process
+        p.child
             .inspect(move |x| debug!("process {} exited with {}", i, x))
             .map(move |x| (i, x))
     }));
@@ -120,46 +120,30 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
     Ok(())
 }
 
-fn spawn_gui<B, E>(
-    _managed_processes: &mut Vec<process::Process>,
-    terminal: tui::Terminal<B>,
-    events: E,
-) where
-    B: tui::backend::Backend + Send + 'static,
-    E: futures::stream::Stream<Item = Event, Error = failure::Error> + Send + 'static,
-{
-    tokio::spawn_async(
-        async {
-            await!(run_gui(terminal, events))
-                .unwrap_or_else(|err| error!("failed to render GUI: {}", err))
-        },
-    )
+fn run_gui(
+    _processes: &mut Vec<process::Process>,
+    mut terminal: tui::Terminal<impl tui::backend::Backend + 'static>,
+    events: impl futures::stream::Stream<Item = Event, Error = failure::Error>,
+) -> impl futures::Stream<Item = bytes::Bytes, Error = failure::Error> {
+    use futures::stream::Stream;
+
+    events
+        .and_then(move |event| {
+            terminal.draw(|mut _f| {})?;
+            Ok(event)
+        })
+        .filter_map(|event| match event {
+            Event::Data(data) => Some(data),
+            _ => None,
+        })
 }
 
-async fn run_gui<B, E>(mut terminal: tui::Terminal<B>, events: E) -> Result<(), failure::Error>
-where
-    B: tui::backend::Backend,
-    E: futures::stream::Stream<Item = Event, Error = failure::Error>,
-{
-    await!(events.for_each(|_event| {
-        terminal.draw(|mut _f| {})?;
-        Ok(())
-    }))
-}
-
-async fn spawn_input<R>(
-    read: R,
+fn read_events(
+    read: impl std::io::Read + Send + 'static,
 ) -> Result<
-    (
-        impl futures::stream::Stream<Item = bytes::Bytes, Error = failure::Error> + Send + 'static,
-        impl futures::stream::Stream<Item = Event, Error = failure::Error> + Send + 'static,
-    ),
+    impl futures::stream::Stream<Item = Event, Error = failure::Error> + Send + 'static,
     failure::Error,
->
-where
-    R: std::io::Read + Send + 'static,
-{
-    use futures::future::Future;
+> {
     use futures::stream::Stream;
     use termion::input::TermReadEventsAndRaw;
 
@@ -167,34 +151,24 @@ where
 
     let raw_events_stream = blocking_iter_to_stream(event_iterator);
 
-    let (data_tx, data_rx) = futures::sync::mpsc::unbounded();
-    let (events_tx, events_rx) = futures::sync::mpsc::unbounded();
-
-    tokio::spawn(
-        raw_events_stream
-            .for_each(move |event| {
-                match event? {
-                    (event @ termion::event::Event::Mouse(_), _) => {
-                        events_tx.unbounded_send(Event::Term(event))?
-                    }
-                    (_, data) => data_tx.unbounded_send(data.into())?,
-                }
-                Ok(())
+    let events = raw_events_stream
+        .and_then(move |event| {
+            Ok(match event? {
+                (termion::event::Event::Mouse(mouse), _) => Some(Event::Mouse(mouse)),
+                (termion::event::Event::Key(termion::event::Key::Ctrl('d')), _)
+                | (termion::event::Event::Key(termion::event::Key::Ctrl('c')), _) => None,
+                (_, data) => Some(Event::Data(data.into())),
             })
-            .map_err(|e| error!("failed to read raw events stream: {}", e)),
-    );
+        })
+        .take_while(|o| futures::future::ok(o.is_some()))
+        .map(Option::unwrap);
 
-    let data_rx = data_rx.map_err(|_| failure::err_msg("failed to receive input data"));
-    let events_rx = events_rx.map_err(|_| failure::err_msg("failed to receive event data"));
-
-    Ok((data_rx, events_rx))
+    Ok(events)
 }
 
-fn blocking_iter_to_stream<I, A>(
-    iter: I,
+fn blocking_iter_to_stream<A>(
+    iter: impl Iterator<Item = A>,
 ) -> impl futures::stream::Stream<Item = A, Error = failure::Error>
-where
-    I: Iterator<Item = A>,
 {
     use futures::stream::Stream;
     use std::sync;
@@ -210,35 +184,25 @@ where
     .map_err(failure::Error::from)
 }
 
-fn spawn_stdin_forwarder<S>(managed_processes: &mut Vec<process::Process>, stdin_source: S)
-where
-    S: futures::stream::Stream<Item = bytes::Bytes, Error = failure::Error> + Send + 'static,
-{
-    use futures::future::Future;
-    use futures::sink::Sink;
-
+async fn forward_stdin(
+    managed_processes: &mut Vec<process::Process>,
+    stdin: impl futures::stream::Stream<Item = bytes::Bytes, Error = failure::Error> + Send + 'static,
+) -> Result<(), failure::Error> {
     let in_txs = managed_processes
         .iter_mut()
-        .map(|p| p.in_tx.take().unwrap())
+        .map(|p| p.stdin.take().unwrap())
         .collect::<Vec<_>>();
 
-    let in_fanout_tx = fanout::Fanout::new(in_txs)
-        .sink_map_err(|_| failure::err_msg("failed to write to stdin fanout queue"));
+    let in_fanout_tx = fanout::Fanout::new(in_txs);
 
-    tokio::spawn(
-        stdin_source
-            .forward(in_fanout_tx)
-            .map_err(move |e| error!("failed to forward stdin to fanout queue: {}", e))
-            .map(|_| debug!("stopped stdin to fanout queue forwarder")),
-    );
+    await!(stdin.forward(in_fanout_tx))?;
+
+    Ok(())
 }
 
-async fn create_terminal<W>(
-    output: W,
-) -> Result<tui::Terminal<impl tui::backend::Backend>, failure::Error>
-where
-    W: std::io::Write,
-{
+async fn create_terminal(
+    output: impl std::io::Write,
+) -> Result<tui::Terminal<impl tui::backend::Backend>, failure::Error> {
     let mouse_terminal = termion::input::MouseTerminal::from(output);
     let alternate_screen_terminal = termion::screen::AlternateScreen::from(mouse_terminal);
     let backend = tui::backend::TermionBackend::new(alternate_screen_terminal);

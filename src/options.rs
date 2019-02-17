@@ -85,7 +85,7 @@ pub struct Options {
     pub initial_args: Vec<String>,
 
     /// Log more verbose messages to the log (defaulting to errors only).
-    #[structopt(short="v", long = "log-verbose", parse(from_occurrences))]
+    #[structopt(short = "v", long = "log-verbose", parse(from_occurrences))]
     pub log_verbose: u8,
 }
 

@@ -1,9 +1,9 @@
-pub struct DelimiterCodec {
+pub struct Codec {
     delimiter: Option<u8>,
     next_index: usize,
 }
 
-impl DelimiterCodec {
+impl Codec {
     pub fn new(delimiter: Option<u8>) -> Self {
         let next_index = 0;
         Self {
@@ -13,7 +13,7 @@ impl DelimiterCodec {
     }
 }
 
-impl tokio::codec::Decoder for DelimiterCodec {
+impl tokio::codec::Decoder for Codec {
     type Item = bytes::Bytes;
     type Error = failure::Error;
 

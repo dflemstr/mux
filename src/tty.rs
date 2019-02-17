@@ -9,7 +9,7 @@ pub struct Tty {
     file: fs::File,
 }
 
-pub struct RawTty {
+pub struct Raw {
     tty: Tty,
     fd: unix::io::RawFd,
     prev_ios: sys::Termios,
@@ -17,39 +17,39 @@ pub struct RawTty {
 
 impl Tty {
     pub fn open() -> Result<Self, failure::Error> {
-        let file = sys::tty::get_tty()?;
+        let file = sys::tty::get()?;
         Ok(Self { file })
     }
 
-    pub fn into_raw_mode(self) -> Result<RawTty, failure::Error> {
+    pub fn into_raw_mode(self) -> Result<Raw, failure::Error> {
         use std::os::unix::io::AsRawFd;
 
         let tty = self;
         let fd = tty.file.as_raw_fd();
 
-        let mut ios = sys::attr::get_terminal_attr(fd)?;
+        let mut ios = sys::attr::get(fd)?;
         let prev_ios = ios;
 
-        sys::attr::raw_terminal_attr(&mut ios);
+        sys::attr::make_raw(&mut ios);
 
-        sys::attr::set_terminal_attr(fd, &ios)?;
+        sys::attr::set(fd, &ios)?;
 
-        Ok(RawTty { tty, fd, prev_ios })
+        Ok(Raw { tty, fd, prev_ios })
     }
 
-    pub fn try_clone(&mut self) -> Result<Tty, failure::Error> {
+    pub fn try_clone(&mut self) -> Result<Self, failure::Error> {
         self.file
             .try_clone()
-            .map(|file| Tty { file })
+            .map(|file| Self { file })
             .map_err(failure::Error::from)
     }
 }
 
-impl RawTty {
-    pub fn try_clone(&mut self) -> Result<RawTty, failure::Error> {
+impl Raw {
+    pub fn try_clone(&mut self) -> Result<Self, failure::Error> {
         let fd = self.fd;
         let prev_ios = self.prev_ios;
-        self.tty.try_clone().map(|tty| RawTty { tty, fd, prev_ios })
+        self.tty.try_clone().map(|tty| Self { tty, fd, prev_ios })
     }
 }
 
@@ -69,13 +69,13 @@ impl io::Write for Tty {
     }
 }
 
-impl Drop for RawTty {
+impl Drop for Raw {
     fn drop(&mut self) {
-        let _ = sys::attr::set_terminal_attr(self.fd, &self.prev_ios);
+        let _ = sys::attr::set(self.fd, &self.prev_ios);
     }
 }
 
-impl ops::Deref for RawTty {
+impl ops::Deref for Raw {
     type Target = Tty;
 
     fn deref(&self) -> &Tty {
@@ -83,19 +83,19 @@ impl ops::Deref for RawTty {
     }
 }
 
-impl ops::DerefMut for RawTty {
+impl ops::DerefMut for Raw {
     fn deref_mut(&mut self) -> &mut Tty {
         &mut self.tty
     }
 }
 
-impl io::Read for RawTty {
+impl io::Read for Raw {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.tty.read(buf)
     }
 }
 
-impl io::Write for RawTty {
+impl io::Write for Raw {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.tty.write(buf)
     }

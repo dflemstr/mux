@@ -57,7 +57,7 @@ async fn generate_raw(
     arg_file: Option<path::PathBuf>,
     delimiter: Option<u8>,
 ) -> Result<impl futures::Stream<Item = bytes::Bytes, Error = failure::Error>, failure::Error> {
-    let codec = delimiter::DelimiterCodec::new(delimiter);
+    let codec = delimiter::Codec::new(delimiter);
 
     if let Some(arg_file) = arg_file {
         let file = await!(tokio::fs::File::open(arg_file))?;
