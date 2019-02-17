@@ -20,6 +20,9 @@ libc = "0.2.48"
 tokio-async-await = "0.1.5"
 termion = "1.5.1"
 tokio-threadpool = "0.1.11"
+fern = "0.5.7"
+chrono = "0.4.6"
+dirs = "1.0.4"
 
 [profile.release]
 lto = true

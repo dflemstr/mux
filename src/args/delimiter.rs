@@ -1,35 +1,10 @@
-use std::path;
-
-struct DelimiterCodec {
+pub struct DelimiterCodec {
     delimiter: Option<u8>,
     next_index: usize,
 }
 
-enum Args<F, I> {
-    File(F),
-    Stdin(I),
-}
-
-pub async fn generate(
-    arg_file: Option<path::PathBuf>,
-    delimiter: Option<u8>,
-) -> Result<impl futures::Stream<Item = bytes::Bytes, Error = failure::Error>, failure::Error> {
-    let codec = DelimiterCodec::new(delimiter);
-
-    if let Some(arg_file) = arg_file {
-        let file = await!(tokio::fs::File::open(arg_file))?;
-        let frames = tokio::codec::FramedRead::new(file, codec);
-        Ok(Args::File(frames))
-    } else {
-        Ok(Args::Stdin(tokio::codec::FramedRead::new(
-            tokio::io::stdin(),
-            codec,
-        )))
-    }
-}
-
 impl DelimiterCodec {
-    fn new(delimiter: Option<u8>) -> Self {
+    pub fn new(delimiter: Option<u8>) -> Self {
         let next_index = 0;
         Self {
             delimiter,
@@ -83,21 +58,5 @@ impl tokio::codec::Decoder for DelimiterCodec {
                 }
             }
         })
-    }
-}
-
-impl<F, I, A, E> futures::Stream for Args<F, I>
-where
-    F: futures::Stream<Item = A, Error = E>,
-    I: futures::Stream<Item = A, Error = E>,
-{
-    type Item = A;
-    type Error = E;
-
-    fn poll(&mut self) -> Result<futures::Async<Option<Self::Item>>, Self::Error> {
-        match *self {
-            Args::File(ref mut f) => f.poll(),
-            Args::Stdin(ref mut i) => i.poll(),
-        }
     }
 }

@@ -8,10 +8,18 @@ extern crate structopt;
 #[macro_use]
 extern crate tokio;
 
+#[cfg(target_os = "redox")]
+#[path = "sys/redox/mod.rs"]
+mod sys;
+
+#[cfg(unix)]
+#[path = "sys/unix/mod.rs"]
+mod sys;
+
 mod args;
 mod fanout;
-mod managed_process;
 mod options;
+mod process;
 mod pty;
 mod tty;
 
@@ -22,8 +30,6 @@ enum Event {
 fn main() {
     use std::process;
 
-    pretty_env_logger::init_timed();
-
     if let Err(err) = run() {
         error!("{:?}", err);
         process::exit(1)
@@ -31,9 +37,33 @@ fn main() {
 }
 
 fn run() -> Result<(), failure::Error> {
+    use std::fs;
     use structopt::StructOpt;
 
     let options = options::Options::from_args();
+
+    let cache_dir = dirs::cache_dir().expect("no suitable cache dir found").join("mux");
+    fs::create_dir_all(&cache_dir)?;
+
+    fern::Dispatch::new()
+        .level(match options.log_verbose {
+            0 => log::LevelFilter::Error,
+            1 => log::LevelFilter::Warn,
+            2 => log::LevelFilter::Info,
+            3 => log::LevelFilter::Debug,
+            _ => log::LevelFilter::Trace,
+        })
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+                record.target(),
+                record.level(),
+                message
+            ))
+        })
+        .chain(fern::log_file(cache_dir.join("session.log"))?)
+        .apply()?;
 
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on_all(tokio_async_await::compat::backward::Compat::new(
@@ -43,35 +73,25 @@ fn run() -> Result<(), failure::Error> {
     Ok(())
 }
 
-async fn run_with_options(options: options::Options) -> Result<(), failure::Error> {
+async fn run_with_options(mut options: options::Options) -> Result<(), failure::Error> {
     use futures::future::Future;
-    use futures::stream::Stream;
 
-    let delimiter = parse_delimiter(options.null, options.delimiter);
-
-    let arg_template = parse_arg_template(&options.initial_args, &options.replace);
-
-    let raw_args = await!(args::generate(options.arg_file, delimiter))?;
-
-    let args: Vec<Vec<String>> = await!(raw_args
-        .map(|b| String::from_utf8_lossy(&b).into_owned())
-        .map(|a| generate_final_args(a, &arg_template))
-        .collect())?;
-
+    let args = await!(args::read(&mut options))?;
     let command = options.command;
 
     let mut managed_processes = args
         .into_iter()
         .enumerate()
-        .map(move |(index, args)| {
-            managed_process::ManagedProcess::spawn(index, command.clone(), args)
-        })
+        .map(move |(index, args)| process::Process::spawn(index, command.clone(), args))
         .collect::<Result<Vec<_>, failure::Error>>()?;
 
-    let mut terminal = await!(create_terminal())?;
+    let mut tty_output = tty::Tty::open()?.into_raw_mode()?;
+    let tty_input = tty_output.try_clone()?;
+
+    let mut terminal = await!(create_terminal(tty_output))?;
     terminal.hide_cursor()?;
 
-    let (input_source, events) = await!(spawn_input())?;
+    let (input_source, events) = await!(spawn_input(tty_input))?;
 
     spawn_stdin_forwarder(&mut managed_processes, input_source);
 
@@ -101,13 +121,19 @@ async fn run_with_options(options: options::Options) -> Result<(), failure::Erro
 }
 
 fn spawn_gui<B, E>(
-    _managed_processes: &mut Vec<managed_process::ManagedProcess>,
-    _terminal: tui::Terminal<B>,
-    _events: E,
+    _managed_processes: &mut Vec<process::Process>,
+    terminal: tui::Terminal<B>,
+    events: E,
 ) where
-    B: tui::backend::Backend,
-    E: futures::stream::Stream<Item = Event, Error = failure::Error>,
+    B: tui::backend::Backend + Send + 'static,
+    E: futures::stream::Stream<Item = Event, Error = failure::Error> + Send + 'static,
 {
+    tokio::spawn_async(
+        async {
+            await!(run_gui(terminal, events))
+                .unwrap_or_else(|err| error!("failed to render GUI: {}", err))
+        },
+    )
 }
 
 async fn run_gui<B, E>(mut terminal: tui::Terminal<B>, events: E) -> Result<(), failure::Error>
@@ -121,19 +147,23 @@ where
     }))
 }
 
-async fn spawn_input() -> Result<
+async fn spawn_input<R>(
+    read: R,
+) -> Result<
     (
         impl futures::stream::Stream<Item = bytes::Bytes, Error = failure::Error> + Send + 'static,
         impl futures::stream::Stream<Item = Event, Error = failure::Error> + Send + 'static,
     ),
     failure::Error,
-> {
+>
+where
+    R: std::io::Read + Send + 'static,
+{
     use futures::future::Future;
     use futures::stream::Stream;
     use termion::input::TermReadEventsAndRaw;
 
-    let tty = await!(tokio::fs::File::open("/dev/tty"))?;
-    let event_iterator = tty.events_and_raw();
+    let event_iterator = read.events_and_raw();
 
     let raw_events_stream = blocking_iter_to_stream(event_iterator);
 
@@ -180,10 +210,8 @@ where
     .map_err(failure::Error::from)
 }
 
-fn spawn_stdin_forwarder<S>(
-    managed_processes: &mut Vec<managed_process::ManagedProcess>,
-    stdin_source: S,
-) where
+fn spawn_stdin_forwarder<S>(managed_processes: &mut Vec<process::Process>, stdin_source: S)
+where
     S: futures::stream::Stream<Item = bytes::Bytes, Error = failure::Error> + Send + 'static,
 {
     use futures::future::Future;
@@ -192,7 +220,7 @@ fn spawn_stdin_forwarder<S>(
     let in_txs = managed_processes
         .iter_mut()
         .map(|p| p.in_tx.take().unwrap())
-        .collect();
+        .collect::<Vec<_>>();
 
     let in_fanout_tx = fanout::Fanout::new(in_txs)
         .sink_map_err(|_| failure::err_msg("failed to write to stdin fanout queue"));
@@ -205,42 +233,16 @@ fn spawn_stdin_forwarder<S>(
     );
 }
 
-async fn create_terminal() -> Result<tui::Terminal<impl tui::backend::Backend>, failure::Error> {
-    use termion::raw::IntoRawMode;
-
-    let tty = await!(tokio::fs::OpenOptions::new().write(true).open("/dev/tty"))?;
-    let raw_terminal = tty.into_raw_mode()?;
-    let mouse_terminal = termion::input::MouseTerminal::from(raw_terminal);
+async fn create_terminal<W>(
+    output: W,
+) -> Result<tui::Terminal<impl tui::backend::Backend>, failure::Error>
+where
+    W: std::io::Write,
+{
+    let mouse_terminal = termion::input::MouseTerminal::from(output);
     let alternate_screen_terminal = termion::screen::AlternateScreen::from(mouse_terminal);
     let backend = tui::backend::TermionBackend::new(alternate_screen_terminal);
 
     let terminal = tui::Terminal::new(backend)?;
     Ok(terminal)
-}
-
-fn generate_final_args(arg: String, command_parts: &[Vec<String>]) -> Vec<String> {
-    if command_parts.len() == 1 {
-        let mut c = command_parts.iter().next().unwrap().clone();
-        c.push(arg);
-        c
-    } else {
-        command_parts.join(&arg)
-    }
-}
-
-fn parse_delimiter(null: bool, delimiter: Option<u8>) -> Option<u8> {
-    if null {
-        Some(0)
-    } else if let Some(d) = delimiter {
-        Some(d)
-    } else {
-        None
-    }
-}
-
-fn parse_arg_template(initial_args: &[String], replace: &Option<String>) -> Vec<Vec<String>> {
-    initial_args
-        .split(|part| replace.as_ref().map_or_else(|| part == "{}", |s| part == s))
-        .map(|s| s.to_vec())
-        .collect::<Vec<_>>()
 }

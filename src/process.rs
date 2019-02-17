@@ -1,6 +1,6 @@
 use std::process;
 
-pub struct ManagedProcess {
+pub struct Process {
     pub index: usize,
     pub in_tx: Option<tokio::sync::mpsc::UnboundedSender<bytes::Bytes>>,
     pub out_rx: Option<tokio::sync::mpsc::UnboundedReceiver<bytes::BytesMut>>,
@@ -8,7 +8,7 @@ pub struct ManagedProcess {
     pub child_process: tokio_process::Child,
 }
 
-impl ManagedProcess {
+impl Process {
     pub fn spawn(index: usize, command: String, args: Vec<String>) -> Result<Self, failure::Error> {
         use futures::future::Future;
         use futures::sink::Sink;
@@ -59,10 +59,15 @@ impl ManagedProcess {
             in_rx
                 .forward(stdin_sink)
                 .map_err(move |e| {
-                    error!(
-                        "failed to forward stdin channel to process {}: {}",
-                        index, e
-                    )
+                    if e.downcast_ref::<std::io::Error>()
+                        .map(|e| e.kind() != std::io::ErrorKind::BrokenPipe)
+                        .unwrap_or(true)
+                    {
+                        error!(
+                            "failed to forward stdin channel to process {}: {}",
+                            index, e
+                        );
+                    }
                 })
                 .map(move |_| debug!("stopped stdin channel to process {}", index)),
         );

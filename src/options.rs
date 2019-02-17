@@ -83,6 +83,10 @@ pub struct Options {
 
     #[structopt(value_name = "INITIAL-ARGS")]
     pub initial_args: Vec<String>,
+
+    /// Log more verbose messages to the log (defaulting to errors only).
+    #[structopt(short="v", long = "log-verbose", parse(from_occurrences))]
+    pub log_verbose: u8,
 }
 
 fn parse_delimiter(delimiter: &str) -> Result<u8, failure::Error> {

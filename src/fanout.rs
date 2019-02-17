@@ -11,7 +11,7 @@ impl<S> Fanout<S>
 where
     S: futures::sink::Sink,
 {
-    pub fn new(sinks: Vec<S>) -> Self {
+    pub fn new(sinks: impl IntoIterator<Item = S>) -> Self {
         let downstreams = sinks.into_iter().map(Downstream::new).collect();
 
         Self { downstreams }
