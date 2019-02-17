@@ -20,7 +20,7 @@ mod pty;
 mod tty;
 
 enum Event {
-    Mouse(termion::event::MouseEvent),
+    Term(termion::event::Event),
     Data(bytes::Bytes),
 }
 
@@ -154,7 +154,7 @@ fn read_events(
     let events = raw_events_stream
         .and_then(move |event| {
             Ok(match event? {
-                (termion::event::Event::Mouse(mouse), _) => Some(Event::Mouse(mouse)),
+                (event @ termion::event::Event::Mouse(_), _) => Some(Event::Term(event)),
                 (termion::event::Event::Key(termion::event::Key::Ctrl('d')), _)
                 | (termion::event::Event::Key(termion::event::Key::Ctrl('c')), _) => None,
                 (_, data) => Some(Event::Data(data.into())),
