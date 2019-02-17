@@ -1,8 +1,14 @@
 use std::ptr;
+use std::os::unix;
+
+pub struct Pty {
+    pub master: unix::io::RawFd,
+    pub slave: unix::io::RawFd,
+}
 
 /// Get raw fds for master/slave ends of a new pty
 #[cfg(target_os = "linux")]
-fn openpty(rows: u8, cols: u8) -> Result<(libc::c_int, libc::c_int), failure::Error> {
+pub fn openpty(rows: u16, cols: u16) -> Result<Pty, failure::Error> {
     let mut master = 0;
     let mut slave = 0;
 
@@ -18,12 +24,12 @@ fn openpty(rows: u8, cols: u8) -> Result<(libc::c_int, libc::c_int), failure::Er
     if res < 0 {
         Err(failure::err_msg("openpty failed"))
     } else {
-        Ok((master, slave))
+        Ok(Pty { master, slave })
     }
 }
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-fn openpty(rows: u8, cols: u8) -> Result<(libc::c_int, libc::c_int), failure::Error> {
+pub fn openpty(rows: u16, cols: u16) -> Result<Pty, failure::Error> {
     let mut master: libc::c_int = 0;
     let mut slave: libc::c_int = 0;
 
@@ -47,6 +53,6 @@ fn openpty(rows: u8, cols: u8) -> Result<(libc::c_int, libc::c_int), failure::Er
     if res < 0 {
         Err(failure::err_msg("openpty failed"))
     } else {
-        Ok((master, slave))
+        Ok(Pty { master, slave })
     }
 }

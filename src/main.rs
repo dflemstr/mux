@@ -28,7 +28,7 @@ fn main() {
     use std::process;
 
     if let Err(err) = run() {
-        error!("{:?}", err);
+        eprintln!("{}", err);
         process::exit(1)
     }
 }
@@ -155,8 +155,7 @@ fn read_events(
         .and_then(move |event| {
             Ok(match event? {
                 (event @ termion::event::Event::Mouse(_), _) => Some(Event::Term(event)),
-                (termion::event::Event::Key(termion::event::Key::Ctrl('d')), _)
-                | (termion::event::Event::Key(termion::event::Key::Ctrl('c')), _) => None,
+                (termion::event::Event::Key(termion::event::Key::Ctrl('d')), _) => None,
                 (_, data) => Some(Event::Data(data.into())),
             })
         })
@@ -190,7 +189,7 @@ async fn forward_stdin(
 ) -> Result<(), failure::Error> {
     let in_txs = managed_processes
         .iter_mut()
-        .map(|p| p.stdin.take().unwrap())
+        .map(|p| p.input.take().unwrap())
         .collect::<Vec<_>>();
 
     let in_fanout_tx = fanout::Fanout::new(in_txs);

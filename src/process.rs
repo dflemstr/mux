@@ -1,63 +1,64 @@
 use std::io;
 use std::process;
+use crate::pty;
 
 pub struct Process {
     pub index: usize,
-    pub stdin: Option<Stdin>,
-    pub stdout: Option<Stdout>,
-    pub stderr: Option<Stderr>,
+    pub input: Option<Input>,
+    pub output: Option<Output>,
     pub child: tokio_process::Child,
 }
 
-pub struct Stdin {
+pub struct Input {
     is_child_closed: bool,
-    sink: tokio::codec::FramedWrite<tokio_process::ChildStdin, tokio::codec::BytesCodec>,
+    sink: tokio::codec::FramedWrite<tokio::fs::File, tokio::codec::BytesCodec>,
 }
 
-pub struct Stdout(tokio::codec::FramedRead<tokio_process::ChildStdout, tokio::codec::BytesCodec>);
-pub struct Stderr(tokio::codec::FramedRead<tokio_process::ChildStderr, tokio::codec::BytesCodec>);
+pub struct Output(tokio::codec::FramedRead<tokio::fs::File, tokio::codec::BytesCodec>);
 
 impl Process {
     pub fn spawn(index: usize, command: String, args: Vec<String>) -> Result<Self, failure::Error> {
         use tokio_process::CommandExt;
+        use std::os::unix::io::FromRawFd;
 
-        let mut child = process::Command::new(command)
+        let pty = pty::openpty(80, 24)?;
+        let slave_input_file = unsafe { std::fs::File::from_raw_fd(pty.slave) };
+        let slave_output_file = slave_input_file.try_clone()?;
+        let slave_error_file = slave_input_file.try_clone()?;
+        let master_output_file = unsafe { std::fs::File::from_raw_fd(pty.master) };
+        let master_input_file = master_output_file.try_clone()?;
+
+        let child = process::Command::new(command)
             .args(args)
-            .stdin(process::Stdio::piped())
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::piped())
+            .stdin(process::Stdio::from(slave_input_file))
+            .stdout(process::Stdio::from(slave_output_file))
+            .stderr(process::Stdio::from(slave_error_file))
             .spawn_async()?;
 
-        let stdin = child.stdin().take().unwrap();
-        let stdout = child.stdout().take().unwrap();
-        let stderr = child.stderr().take().unwrap();
+        let input = tokio::fs::File::from_std(master_input_file);
+        let output = tokio::fs::File::from_std(master_output_file);
 
-        let stdin = Some(Stdin::new(tokio::codec::FramedWrite::new(
-            stdin,
+        let input = Some(Input::new(tokio::codec::FramedWrite::new(
+            input,
             tokio::codec::BytesCodec::new(),
         )));
-        let stdout = Some(Stdout(tokio::codec::FramedRead::new(
-            stdout,
-            tokio::codec::BytesCodec::new(),
-        )));
-        let stderr = Some(Stderr(tokio::codec::FramedRead::new(
-            stderr,
+        let output = Some(Output(tokio::codec::FramedRead::new(
+            output,
             tokio::codec::BytesCodec::new(),
         )));
 
         Ok(Self {
             index,
-            stdin,
-            stdout,
-            stderr,
+            input,
+            output,
             child,
         })
     }
 }
 
-impl Stdin {
+impl Input {
     fn new(
-        sink: tokio::codec::FramedWrite<tokio_process::ChildStdin, tokio::codec::BytesCodec>,
+        sink: tokio::codec::FramedWrite<tokio::fs::File, tokio::codec::BytesCodec>,
     ) -> Self {
         let is_child_closed = false;
 
@@ -68,7 +69,7 @@ impl Stdin {
     }
 }
 
-impl futures::sink::Sink for Stdin {
+impl futures::sink::Sink for Input {
     type SinkItem = bytes::Bytes;
     type SinkError = failure::Error;
 
@@ -110,16 +111,7 @@ impl futures::sink::Sink for Stdin {
     }
 }
 
-impl futures::stream::Stream for Stdout {
-    type Item = bytes::BytesMut;
-    type Error = failure::Error;
-
-    fn poll(&mut self) -> Result<futures::Async<Option<Self::Item>>, Self::Error> {
-        self.0.poll().map_err(failure::Error::from)
-    }
-}
-
-impl futures::stream::Stream for Stderr {
+impl futures::stream::Stream for Output {
     type Item = bytes::BytesMut;
     type Error = failure::Error;
 
