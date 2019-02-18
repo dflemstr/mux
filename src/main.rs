@@ -173,7 +173,7 @@ fn run_gui(
                     state[*idx].push_str(str::from_utf8(&data)?);
                 }
                 Event::Exit(idx, status) => {
-                    state[*idx].push_str(&format!("\nprocess {} exited with {}", idx, status));
+                    state[*idx].push_str(&format!("\nprocess exited with {}", status));
                 }
                 _ => {}
             };
