@@ -140,7 +140,7 @@ impl futures::stream::Stream for Output {
         if let Some(ref mut stream) = self.stream {
             stream.poll().or_else(|error| {
                 debug!("error in process output poll: {}", error);
-                if error.kind() == io::ErrorKind::BrokenPipe {
+                if error.raw_os_error() == Some(5) {
                     self.stream = None;
                     Ok(futures::Async::Ready(None))
                 } else {
