@@ -19,10 +19,10 @@ use std::str;
 
 use vte;
 use base64;
-use crate::index::{Column, Line, Contains};
+use super::index::{Column, Line, Contains};
 
-use crate::MouseCursor;
-use crate::term::color::Rgb;
+use super::mouse::MouseCursor;
+use super::color::Rgb;
 
 // Parse color arguments
 //
@@ -351,7 +351,7 @@ pub trait Handler {
 }
 
 /// Describes shape of cursor
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum CursorStyle {
     /// Cursor is a block like `▒`
     Block,
@@ -501,7 +501,7 @@ pub enum TabulationClearMode {
 ///
 /// The order here matters since the enum should be castable to a `usize` for
 /// indexing a color list.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum NamedColor {
     /// Black
     Black = 0,
@@ -1394,9 +1394,9 @@ pub mod C1 {
 #[cfg(test)]
 mod tests {
     use std::io;
-    use crate::index::{Line, Column};
+    use crate::ui::index::{Line, Column};
     use super::{Processor, Handler, Attr, TermInfo, Color, StandardCharset, CharsetIndex, parse_rgb_color, parse_number};
-    use crate::term::color::Rgb;
+    use crate::ui::color::Rgb;
 
     /// The /dev/null of `io::Write`
     struct Void;

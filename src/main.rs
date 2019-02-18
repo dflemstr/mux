@@ -10,6 +10,8 @@ extern crate structopt;
 #[macro_use]
 extern crate tokio;
 
+use std::process::exit;
+
 #[cfg(unix)]
 #[path = "sys/unix/mod.rs"]
 mod sys;
@@ -25,6 +27,7 @@ mod ui;
 enum Event {
     Term(termion::event::Event),
     Input(bytes::BytesMut),
+    InputEnd,
     Output(usize, bytes::BytesMut),
 }
 
@@ -41,6 +44,7 @@ fn main() {
 fn run() -> Result<(), failure::Error> {
     use std::fs;
     use structopt::StructOpt;
+    use futures::future::Future;
 
     let options = options::Options::from_args();
 
@@ -70,19 +74,30 @@ fn run() -> Result<(), failure::Error> {
             .apply()?;
     }
 
-    debug!("starting");
+    info!("starting");
 
-    let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on_all(tokio_async_await::compat::backward::Compat::new(
+    let mut runtime = tokio::runtime::Runtime::new()?;
+    let exit_statuses = runtime.block_on(tokio_async_await::compat::backward::Compat::new(
         run_with_options(options),
     ))?;
+    debug!("terminating runtime");
+    runtime.shutdown_now().wait().unwrap();
 
-    debug!("done");
+    for (index, exit_status) in exit_statuses {
+        if !exit_status.success() {
+            return Err(failure::err_msg(format!(
+                "process with index {} failed with {}",
+                index, exit_status
+            )));
+        }
+    }
+
+    info!("done");
 
     Ok(())
 }
 
-async fn run_with_options(mut options: options::Options) -> Result<(), failure::Error> {
+async fn run_with_options(mut options: options::Options) -> Result<Vec<(usize, std::process::ExitStatus)>, failure::Error> {
     use futures::future::Future;
 
     let args = await!(args::read(&mut options))?;
@@ -106,9 +121,9 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
 
     debug!("created terminal");
 
-    let events = read_events(tty_input)?;
+    let events = read_events(tty_input);
 
-    let stdin = run_gui(&mut processes, terminal, events);
+    let stdin = run_gui(&mut processes, terminal, events)?;
 
     debug!("beginning to forward stdin");
 
@@ -127,23 +142,14 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
 
     debug!("all processes finished");
 
-    for (index, exit_status) in exit_statuses {
-        if !exit_status.success() {
-            return Err(failure::err_msg(format!(
-                "process with index {} failed with {}",
-                index, exit_status
-            )));
-        }
-    }
-
-    Ok(())
+    Ok(exit_statuses)
 }
 
 fn run_gui(
     processes: &mut Vec<process::Process>,
     mut terminal: tui::Terminal<impl tui::backend::Backend + 'static>,
     events: impl futures::stream::Stream<Item = Event, Error = failure::Error>,
-) -> impl futures::Stream<Item = bytes::BytesMut, Error = failure::Error> {
+) -> Result<impl futures::Stream<Item = bytes::BytesMut, Error = failure::Error>, failure::Error> {
     use futures::stream::Stream;
     use std::str;
 
@@ -169,7 +175,9 @@ fn run_gui(
     )
     .map(|(idx, data)| Event::Output(idx, data));
 
-    events
+    terminal.draw(|f| render_ui(&state, num_processes, f))?;
+
+    let output = events
         .select(output)
         .and_then(move |event| {
             match &event {
@@ -179,50 +187,54 @@ fn run_gui(
                 _ => {}
             };
 
-            terminal.draw(|mut f| {
-                use tui::widgets::Widget;
-
-                let chunks = tui::layout::Layout::default()
-                    .direction(tui::layout::Direction::Horizontal)
-                    .constraints(vec![
-                        tui::layout::Constraint::Percentage(
-                            (100.0 / num_processes as f64) as u16
-                        );
-                        num_processes
-                    ])
-                    .split(f.size());
-
-                for (i, output) in state.iter().enumerate() {
-                    tui::widgets::Paragraph::new(
-                        output
-                            .lines()
-                            .map(|line| tui::widgets::Text::Raw(line.into()))
-                            .collect::<Vec<_>>()
-                            .iter(),
-                    )
-                    .block(
-                        tui::widgets::Block::default()
-                            .borders(tui::widgets::Borders::ALL)
-                            .title(&format!("{}", i)),
-                    )
-                    .render(&mut f, chunks[i]);
-                }
-            })?;
+            terminal.draw(|f| render_ui(&state, num_processes, f))?;
 
             Ok(event)
         })
+        .take_while(|e| Ok(match e { Event::InputEnd => false, _ => true }))
         .filter_map(|event| match event {
             Event::Input(data) => Some(data),
             _ => None,
-        })
+        });
+
+    Ok(output)
+}
+
+fn render_ui(state: &[String], num_processes: usize, mut f: tui::Frame<impl tui::backend::Backend>) {
+    use tui::widgets::Widget;
+
+    let chunks = tui::layout::Layout::default()
+        .direction(tui::layout::Direction::Horizontal)
+        .constraints(vec![
+            tui::layout::Constraint::Percentage(
+                (100.0 / num_processes as f64) as u16
+            );
+            num_processes
+        ])
+        .split(f.size());
+
+    for (i, output) in state.iter().enumerate() {
+        tui::widgets::Paragraph::new(
+            output
+                .lines()
+                .map(|line| tui::widgets::Text::Raw(line.into()))
+                .collect::<Vec<_>>()
+                .iter(),
+        )
+            .block(
+                tui::widgets::Block::default()
+                    .borders(tui::widgets::Borders::ALL)
+                    .title(&format!("{}", i)),
+            )
+            .render(&mut f, chunks[i]);
+    }
 }
 
 fn read_events(
     read: impl std::io::Read + Send + 'static,
-) -> Result<
-    impl futures::stream::Stream<Item = Event, Error = failure::Error> + Send + 'static,
-    failure::Error,
-> {
+) ->
+    impl futures::stream::Stream<Item = Event, Error = failure::Error> + Send + 'static
+{
     use futures::stream::Stream;
     use termion::input::TermReadEventsAndRaw;
 
@@ -231,18 +243,14 @@ fn read_events(
     let raw_events_stream =
         stream_utils::blocking_iter_to_stream(event_iterator).map_err(failure::Error::from);
 
-    let events = raw_events_stream
+    raw_events_stream
         .and_then(move |event| {
             Ok(match event? {
-                (event @ termion::event::Event::Mouse(_), _) => Some(Event::Term(event)),
-                (termion::event::Event::Key(termion::event::Key::Ctrl('d')), _) => None,
-                (_, data) => Some(Event::Input(data.into())),
+                (event @ termion::event::Event::Mouse(_), _) => Event::Term(event),
+                (termion::event::Event::Key(termion::event::Key::Ctrl('d')), _) => Event::InputEnd,
+                (_, data) => Event::Input(data.into()),
             })
         })
-        .take_while(|o| futures::future::ok(o.is_some()))
-        .map(Option::unwrap);
-
-    Ok(events)
 }
 
 async fn forward_stdin(

@@ -1,5 +1,6 @@
+use crate::ui::ansi;
+
 bitflags! {
-    #[derive(Serialize, Deserialize)]
     pub struct Flags: u16 {
         const INVERSE           = 0b00_0000_0001;
         const BOLD              = 0b00_0000_0010;
@@ -15,10 +16,10 @@ bitflags! {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Cell {
     pub c: char,
-    pub fg: Color,
-    pub bg: Color,
+    pub fg: ansi::Color,
+    pub bg: ansi::Color,
     pub flags: Flags,
 }
