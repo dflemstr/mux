@@ -10,8 +10,6 @@ extern crate structopt;
 #[macro_use]
 extern crate tokio;
 
-use std::process::exit;
-
 #[cfg(unix)]
 #[path = "sys/unix/mod.rs"]
 mod sys;
@@ -25,9 +23,7 @@ mod tty;
 mod ui;
 
 enum Event {
-    Term(termion::event::Event),
-    Input(bytes::BytesMut),
-    InputEnd,
+    Input(termion::event::Event, bytes::BytesMut),
     Output(usize, bytes::BytesMut),
 }
 
@@ -191,9 +187,10 @@ fn run_gui(
 
             Ok(event)
         })
-        .take_while(|e| Ok(match e { Event::InputEnd => false, _ => true }))
+        .take_while(|e| Ok(match e { Event::Input(termion::event::Event::Key(termion::event::Key::Ctrl('d')), _) => false, _ => true }))
+        .chain(futures::stream::iter_ok(vec![Event::Input(termion::event::Event::Key(termion::event::Key::Ctrl('d')), [b'\x04'].as_ref().into())].into_iter()))
         .filter_map(|event| match event {
-            Event::Input(data) => Some(data),
+            Event::Input(_, data) => Some(data),
             _ => None,
         });
 
@@ -245,11 +242,9 @@ fn read_events(
 
     raw_events_stream
         .and_then(move |event| {
-            Ok(match event? {
-                (event @ termion::event::Event::Mouse(_), _) => Event::Term(event),
-                (termion::event::Event::Key(termion::event::Key::Ctrl('d')), _) => Event::InputEnd,
-                (_, data) => Event::Input(data.into()),
-            })
+            match event? {
+                (event, data) => Ok(Event::Input(event, data.into())),
+            }
         })
 }
 

@@ -36,7 +36,7 @@ impl Process {
 
         let child = process::Command::new(command)
             .args(args)
-            .spawn_pty_async_raw(&pty)?;
+            .spawn_pty_async(&pty)?;
 
         let (output, input) = pty.split();
 
