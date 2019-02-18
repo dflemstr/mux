@@ -16,5 +16,4 @@ struct ProcessState {
     output: String,
 }
 
-impl ansi::Handler for ProcessState {
-}
+impl ansi::Handler for ProcessState {}

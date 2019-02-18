@@ -17,18 +17,18 @@
 /// Indexing types and implementations for Grid and Line
 use std::cmp::{Ord, Ordering};
 use std::fmt;
-use std::ops::{self, Deref, Add, Range};
+use std::ops::{self, Add, Deref, Range};
 
 /// The side of a cell
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Side {
     Left,
-    Right
+    Right,
 }
 
 /// Index in the grid using row, column notation
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, PartialOrd)]
-pub struct Point<L=Line> {
+pub struct Point<L = Line> {
     pub line: L,
     pub col: Column,
 }
@@ -43,11 +43,10 @@ impl Ord for Point {
     fn cmp(&self, other: &Point) -> Ordering {
         use std::cmp::Ordering::*;
         match (self.line.cmp(&other.line), self.col.cmp(&other.col)) {
-            (Equal,   Equal) => Equal,
-            (Equal,   ord) |
-            (ord,     Equal) => ord,
-            (Less,    _)     => Less,
-            (Greater, _)     => Greater,
+            (Equal, Equal) => Equal,
+            (Equal, ord) | (ord, Equal) => ord,
+            (Less, _) => Less,
+            (Greater, _) => Greater,
         }
     }
 }
@@ -146,7 +145,7 @@ macro_rules! forward_ref_binop {
                 $imp::$method(*self, *other)
             }
         }
-    }
+    };
 }
 
 /// Macro for deriving deref
@@ -160,7 +159,7 @@ macro_rules! deref {
                 &self.0
             }
         }
-    }
+    };
 }
 
 macro_rules! add {
@@ -173,7 +172,7 @@ macro_rules! add {
                 $construct(self.0 + rhs.0)
             }
         }
-    }
+    };
 }
 
 macro_rules! sub {
@@ -213,7 +212,7 @@ macro_rules! sub {
                 $construct(self.0 - rhs.0)
             }
         }
-    }
+    };
 }
 
 /// This exists because we can't implement Iterator on Range
@@ -229,20 +228,15 @@ impl<T> From<Range<T>> for IndexRange<T> {
 }
 
 pub enum RangeInclusive<Idx> {
-    Empty {
-        at: Idx,
-    },
-    NonEmpty {
-        start: Idx,
-        end: Idx,
-    },
+    Empty { at: Idx },
+    NonEmpty { start: Idx, end: Idx },
 }
 
 impl<Idx> RangeInclusive<Idx> {
     pub fn new(from: Idx, to: Idx) -> Self {
         RangeInclusive::NonEmpty {
             start: from,
-            end: to
+            end: to,
         }
     }
 }
@@ -260,8 +254,10 @@ macro_rules! inclusive {
                 match *self {
                     Empty { .. } => None, // empty iterators yield no values
 
-                    NonEmpty { ref mut start, ref mut end } => {
-
+                    NonEmpty {
+                        ref mut start,
+                        ref mut end,
+                    } => {
                         // march start towards (maybe past!) end and yield the old value
                         if start <= end {
                             let old = *start;
@@ -286,13 +282,13 @@ macro_rules! inclusive {
                         let added = $steps_add_one(start, end);
                         match added {
                             Some(hint) => (hint.saturating_add(1), hint.checked_add(1)),
-                            None       => (0, None)
+                            None => (0, None),
                         }
                     }
                 }
             }
         }
-    }
+    };
 }
 
 fn steps_add_one_u8(start: u8, end: u8) -> Option<usize> {
@@ -306,8 +302,10 @@ inclusive!(u8, steps_add_one_u8);
 
 #[test]
 fn test_range() {
-    assert_eq!(RangeInclusive::new(1,10).collect::<Vec<_>>(),
-               vec![1,2,3,4,5,6,7,8,9,10]);
+    assert_eq!(
+        RangeInclusive::new(1, 10).collect::<Vec<_>>(),
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    );
 }
 
 // can be removed if range_contains is stabilized
@@ -326,9 +324,11 @@ impl<T: PartialOrd<T>> Contains for Range<T> {
 impl<T: PartialOrd<T>> Contains for RangeInclusive<T> {
     type Content = T;
     fn contains_(&self, item: Self::Content) -> bool {
-        if let RangeInclusive::NonEmpty{ref start, ref end} = *self {
+        if let RangeInclusive::NonEmpty { ref start, ref end } = *self {
             (*start <= item) && (item <= *end)
-        } else { false }
+        } else {
+            false
+        }
     }
 }
 
@@ -459,7 +459,7 @@ ops!(Linear, Linear);
 
 #[cfg(test)]
 mod tests {
-    use super::{Line, Column, Point};
+    use super::{Column, Line, Point};
 
     #[test]
     fn location_ordering() {

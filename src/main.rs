@@ -38,9 +38,9 @@ fn main() {
 }
 
 fn run() -> Result<(), failure::Error> {
+    use futures::future::Future;
     use std::fs;
     use structopt::StructOpt;
-    use futures::future::Future;
 
     let options = options::Options::from_args();
 
@@ -93,7 +93,9 @@ fn run() -> Result<(), failure::Error> {
     Ok(())
 }
 
-async fn run_with_options(mut options: options::Options) -> Result<Vec<(usize, std::process::ExitStatus)>, failure::Error> {
+async fn run_with_options(
+    mut options: options::Options,
+) -> Result<Vec<(usize, std::process::ExitStatus)>, failure::Error> {
     use futures::future::Future;
 
     let args = await!(args::read(&mut options))?;
@@ -104,6 +106,16 @@ async fn run_with_options(mut options: options::Options) -> Result<Vec<(usize, s
         .enumerate()
         .map(move |(index, args)| process::Process::spawn(index, command.clone(), args))
         .collect::<Result<Vec<_>, failure::Error>>()?;
+
+    let inputs = processes
+        .iter_mut()
+        .map(|p| p.input.take().unwrap())
+        .collect::<Vec<_>>();
+
+    let outputs = processes
+        .iter_mut()
+        .map(|p| p.output.take().unwrap())
+        .collect::<Vec<_>>();
 
     debug!("spawned {} processes", processes.len());
 
@@ -119,13 +131,16 @@ async fn run_with_options(mut options: options::Options) -> Result<Vec<(usize, s
 
     let events = read_events(tty_input);
 
-    let stdin = run_gui(&mut processes, terminal, events)?;
+    let stdin = run_gui(outputs, terminal, events)?;
 
-    debug!("beginning to forward stdin");
+    tokio::spawn_async(
+        async {
+            await!(forward_stdin(inputs, stdin))
+                .unwrap_or_else(|err| error!("failed to forward stdin: {:?}", err))
+        },
+    );
 
-    await!(forward_stdin(&mut processes, stdin))?;
-
-    debug!("done forwarding stdin; waiting for processes to finish");
+    debug!("waiting for processes to finish");
 
     let exit_statuses_future = futures::future::join_all(processes.into_iter().map(|p| {
         let i = p.index;
@@ -142,36 +157,24 @@ async fn run_with_options(mut options: options::Options) -> Result<Vec<(usize, s
 }
 
 fn run_gui(
-    processes: &mut Vec<process::Process>,
+    outputs: Vec<impl futures::stream::Stream<Item = bytes::BytesMut, Error = failure::Error>>,
     mut terminal: tui::Terminal<impl tui::backend::Backend + 'static>,
     events: impl futures::stream::Stream<Item = Event, Error = failure::Error>,
 ) -> Result<impl futures::Stream<Item = bytes::BytesMut, Error = failure::Error>, failure::Error> {
     use futures::stream::Stream;
     use std::str;
 
-    let mut state = processes
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            assert_eq!(i, p.index);
-            String::new()
-        })
-        .collect::<Vec<_>>();
-    let num_processes = processes.len();
-    let outputs = processes
-        .iter_mut()
-        .map(|p| p.output.take().unwrap())
-        .collect::<Vec<_>>();
+    let mut state = outputs.iter().map(|_| String::new()).collect::<Vec<_>>();
+    let num_outputs = outputs.len();
 
     let output = stream_utils::select_all(
         outputs
             .into_iter()
             .enumerate()
-            .map(|(i, o)| o.map(move |b| (i, b))),
-    )
-    .map(|(idx, data)| Event::Output(idx, data));
+            .map(|(i, o)| o.map(move |b| Event::Output(i, b))),
+    );
 
-    terminal.draw(|f| render_ui(&state, num_processes, f))?;
+    terminal.draw(|f| render_ui(&state, num_outputs, f))?;
 
     let output = events
         .select(output)
@@ -183,12 +186,10 @@ fn run_gui(
                 _ => {}
             };
 
-            terminal.draw(|f| render_ui(&state, num_processes, f))?;
+            terminal.draw(|f| render_ui(&state, num_outputs, f))?;
 
             Ok(event)
         })
-        .take_while(|e| Ok(match e { Event::Input(termion::event::Event::Key(termion::event::Key::Ctrl('d')), _) => false, _ => true }))
-        .chain(futures::stream::iter_ok(vec![Event::Input(termion::event::Event::Key(termion::event::Key::Ctrl('d')), [b'\x04'].as_ref().into())].into_iter()))
         .filter_map(|event| match event {
             Event::Input(_, data) => Some(data),
             _ => None,
@@ -197,7 +198,11 @@ fn run_gui(
     Ok(output)
 }
 
-fn render_ui(state: &[String], num_processes: usize, mut f: tui::Frame<impl tui::backend::Backend>) {
+fn render_ui(
+    state: &[String],
+    num_processes: usize,
+    mut f: tui::Frame<impl tui::backend::Backend>,
+) {
     use tui::widgets::Widget;
 
     let chunks = tui::layout::Layout::default()
@@ -218,20 +223,18 @@ fn render_ui(state: &[String], num_processes: usize, mut f: tui::Frame<impl tui:
                 .collect::<Vec<_>>()
                 .iter(),
         )
-            .block(
-                tui::widgets::Block::default()
-                    .borders(tui::widgets::Borders::ALL)
-                    .title(&format!("{}", i)),
-            )
-            .render(&mut f, chunks[i]);
+        .block(
+            tui::widgets::Block::default()
+                .borders(tui::widgets::Borders::ALL)
+                .title(&format!("{}", i)),
+        )
+        .render(&mut f, chunks[i]);
     }
 }
 
 fn read_events(
     read: impl std::io::Read + Send + 'static,
-) ->
-    impl futures::stream::Stream<Item = Event, Error = failure::Error> + Send + 'static
-{
+) -> impl futures::stream::Stream<Item = Event, Error = failure::Error> + Send + 'static {
     use futures::stream::Stream;
     use termion::input::TermReadEventsAndRaw;
 
@@ -240,28 +243,22 @@ fn read_events(
     let raw_events_stream =
         stream_utils::blocking_iter_to_stream(event_iterator).map_err(failure::Error::from);
 
-    raw_events_stream
-        .and_then(move |event| {
-            match event? {
-                (event, data) => Ok(Event::Input(event, data.into())),
-            }
-        })
+    raw_events_stream.and_then(move |event| match event? {
+        (event, data) => Ok(Event::Input(event, data.into())),
+    })
 }
 
 async fn forward_stdin(
-    managed_processes: &mut Vec<process::Process>,
+    inputs: Vec<
+        impl futures::sink::Sink<SinkItem = bytes::Bytes, SinkError = failure::Error> + Send + 'static,
+    >,
     stdin: impl futures::stream::Stream<Item = bytes::BytesMut, Error = failure::Error> + Send + 'static,
 ) -> Result<(), failure::Error> {
     use futures::stream::Stream;
 
-    let in_txs = managed_processes
-        .iter_mut()
-        .map(|p| p.input.take().unwrap())
-        .collect::<Vec<_>>();
-
-    let in_fanout_tx = fanout::Fanout::new(in_txs);
-
-    await!(stdin.map(bytes::BytesMut::freeze).forward(in_fanout_tx))?;
+    await!(stdin
+        .map(bytes::BytesMut::freeze)
+        .forward(fanout::Fanout::new(inputs)))?;
 
     Ok(())
 }
