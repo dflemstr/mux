@@ -4,6 +4,7 @@ use crate::options;
 
 mod delimiter;
 
+#[must_use = "streams do nothing unless polled"]
 enum Args<F, I> {
     File(F),
     Stdin(I),

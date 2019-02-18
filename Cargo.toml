@@ -9,7 +9,6 @@ tui = "0.4.0"
 vte = "0.3.3"
 structopt = "0.2.14"
 tokio = { version = "0.1.15", features = ["async-await-preview"] }
-tokio-process = "0.2.3"
 failure = "0.1.5"
 bytes = "0.4.11"
 memchr = "2.2.0"
@@ -22,6 +21,8 @@ tokio-threadpool = "0.1.11"
 fern = "0.5.7"
 chrono = "0.4.6"
 dirs = "1.0.4"
+bitflags = "1.0.4"
+tokio-pty-process = "0.3.1"
 
 [profile.release]
 lto = true
