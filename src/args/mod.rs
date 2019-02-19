@@ -4,13 +4,18 @@ use crate::options;
 
 mod delimiter;
 
+pub struct Args {
+    pub all: Vec<String>,
+    pub specific: String,
+}
+
 #[must_use = "streams do nothing unless polled"]
-enum Args<F, I> {
+enum Source<F, I> {
     File(F),
     Stdin(I),
 }
 
-pub async fn read(options: &mut options::Options) -> Result<Vec<Vec<String>>, failure::Error> {
+pub async fn read(options: &mut options::Options) -> Result<Vec<Args>, failure::Error> {
     use futures::stream::Stream;
 
     let delimiter = parse_delimiter(options.null, options.delimiter);
@@ -19,7 +24,7 @@ pub async fn read(options: &mut options::Options) -> Result<Vec<Vec<String>>, fa
 
     let raw_args = await!(generate_raw(options.arg_file.take(), delimiter))?;
 
-    let args: Vec<Vec<String>> = await!(raw_args
+    let args: Vec<Args> = await!(raw_args
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .map(|a| generate_final_args(a, &arg_template))
         .collect())?;
@@ -27,13 +32,15 @@ pub async fn read(options: &mut options::Options) -> Result<Vec<Vec<String>>, fa
     Ok(args)
 }
 
-fn generate_final_args(arg: String, command_parts: &[Vec<String>]) -> Vec<String> {
+fn generate_final_args(arg: String, command_parts: &[Vec<String>]) -> Args {
+    let specific = arg.clone();
     if command_parts.len() == 1 {
-        let mut c = command_parts.iter().next().unwrap().clone();
-        c.push(arg);
-        c
+        let mut all = command_parts.iter().next().unwrap().clone();
+        all.push(arg);
+        Args { all, specific }
     } else {
-        command_parts.join(&arg)
+        let all = command_parts.join(&arg);
+        Args { all, specific }
     }
 }
 
@@ -63,16 +70,16 @@ async fn generate_raw(
     if let Some(arg_file) = arg_file {
         let file = await!(tokio::fs::File::open(arg_file))?;
         let frames = tokio::codec::FramedRead::new(file, codec);
-        Ok(Args::File(frames))
+        Ok(Source::File(frames))
     } else {
-        Ok(Args::Stdin(tokio::codec::FramedRead::new(
+        Ok(Source::Stdin(tokio::codec::FramedRead::new(
             tokio::io::stdin(),
             codec,
         )))
     }
 }
 
-impl<F, I, A, E> futures::Stream for Args<F, I>
+impl<F, I, A, E> futures::Stream for Source<F, I>
 where
     F: futures::Stream<Item = A, Error = E>,
     I: futures::Stream<Item = A, Error = E>,
@@ -82,8 +89,8 @@ where
 
     fn poll(&mut self) -> Result<futures::Async<Option<Self::Item>>, Self::Error> {
         match *self {
-            Args::File(ref mut f) => f.poll(),
-            Args::Stdin(ref mut i) => i.poll(),
+            Source::File(ref mut f) => f.poll(),
+            Source::Stdin(ref mut i) => i.poll(),
         }
     }
 }

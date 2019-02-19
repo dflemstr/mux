@@ -22,7 +22,6 @@ use base64;
 use vte;
 
 use super::color::Rgb;
-use super::mouse::MouseCursor;
 
 // Parse color arguments
 //
@@ -375,6 +374,11 @@ impl Default for CursorStyle {
     fn default() -> CursorStyle {
         CursorStyle::Block
     }
+}
+
+pub enum MouseCursor {
+    Arrow,
+    Text,
 }
 
 /// Terminal modes

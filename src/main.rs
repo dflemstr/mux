@@ -15,18 +15,12 @@ extern crate tokio;
 mod sys;
 
 mod args;
-mod fanout;
 mod options;
 mod process;
-mod stream_utils;
+mod sinks;
+mod streams;
 mod tty;
 mod ui;
-
-enum Event {
-    Input(termion::event::Event, bytes::BytesMut),
-    Output(usize, bytes::BytesMut),
-    Exit(usize, std::process::ExitStatus),
-}
 
 fn main() {
     use std::process;
@@ -86,31 +80,19 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
     use futures::future::Future;
     use futures::stream::Stream;
 
+    let template_placeholder = options.replace.clone().unwrap_or_else(|| "{}".to_owned());
     let args = await!(args::read(&mut options))?;
     let command = options.command;
 
-    let mut processes = args
-        .into_iter()
-        .enumerate()
-        .map(move |(index, args)| process::Process::spawn(index, command.clone(), args))
-        .collect::<Result<Vec<_>, failure::Error>>()?;
+    let processes = args
+        .iter()
+        .map(|args| process::Process::spawn(&command, &args.all))
+        .collect::<Result<Vec<_>, _>>()?;
 
     debug!("spawned {} processes", processes.len());
 
-    let inputs = processes
-        .iter_mut()
-        .map(|p| p.input.take().unwrap())
-        .collect::<Vec<_>>();
-
-    let outputs = processes
-        .iter_mut()
-        .map(|p| p.output.take().unwrap())
-        .collect::<Vec<_>>();
-
-    let children = processes
-        .into_iter()
-        .map(|p| p.child.map_err(failure::Error::from))
-        .collect::<Vec<_>>();
+    let (process_writes, process_reads): (Vec<_>, Vec<_>) =
+        processes.into_iter().map(|p| p.split()).unzip();
 
     let mut tty_output = tty::Tty::open()?.into_raw_mode()?;
     let tty_input = tty_output.try_clone()?;
@@ -123,9 +105,17 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
     debug!("created terminal");
 
     let events = read_events(tty_input);
-    let input = run_gui(outputs, children, terminal, events)?;
+    let input = run_gui(
+        process_reads,
+        terminal,
+        events,
+        args.into_iter()
+            .map(|args| args.specific)
+            .collect::<Vec<_>>(),
+        template_placeholder,
+    )?;
 
-    let rest = await!(forward_stdin(inputs, input))?;
+    let rest = await!(forward_stdin(process_writes, input))?;
 
     debug!("stdin closed, discarding further input");
 
@@ -135,113 +125,77 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
 }
 
 fn run_gui(
-    outputs: Vec<impl futures::stream::Stream<Item = bytes::BytesMut, Error = failure::Error>>,
-    exits: Vec<
-        impl futures::future::Future<Item = std::process::ExitStatus, Error = failure::Error>,
-    >,
+    process_reads: Vec<process::Read>,
     mut terminal: tui::Terminal<impl tui::backend::Backend + 'static>,
-    events: impl futures::stream::Stream<Item = Event, Error = failure::Error>,
+    events: impl futures::stream::Stream<Item = ui::Event, Error = failure::Error>,
+    args: Vec<String>,
+    template_placeholder: String,
 ) -> Result<impl futures::Stream<Item = bytes::BytesMut, Error = failure::Error>, failure::Error> {
+    use futures::future::Future;
     use futures::stream::Stream;
-    use std::str;
 
-    let mut state = outputs.iter().map(|_| String::new()).collect::<Vec<_>>();
-    let num_outputs = outputs.len();
+    let mut state = process_reads
+        .iter()
+        .map(|_| String::new())
+        .collect::<Vec<_>>();
+    let num_outputs = process_reads.len();
 
-    let output = stream_utils::select_all(
+    let (outputs, exits): (Vec<_>, Vec<_>) = process_reads
+        .into_iter()
+        .map(|p| (p.output, p.exit))
+        .unzip();
+
+    let output = streams::select_all(
         outputs
             .into_iter()
             .enumerate()
-            .map(|(i, o)| o.map(move |b| Event::Output(i, b))),
+            .map(|(i, o)| o.map(move |b| ui::Event::Output(i, b))),
     );
 
     let exit = futures::stream::futures_unordered(
         exits
             .into_iter()
             .enumerate()
-            .map(|(i, e)| e.map(move |e| Event::Exit(i, e))),
+            .map(|(i, e)| e.map(move |e| ui::Event::Exit(i, e))),
     );
 
-    terminal.draw(|f| render_ui(&state, num_outputs, f))?;
+    let events = events.select(output).select(exit);
 
-    let output = events
-        .select(output)
-        .select(exit)
-        .and_then(move |event| {
-            match &event {
-                Event::Output(idx, data) => {
-                    state[*idx].push_str(str::from_utf8(&data)?);
-                }
-                Event::Exit(idx, status) => {
-                    state[*idx].push_str(&format!("\nprocess exited with {}", status));
-                }
-                _ => {}
-            };
+    let mut ui = ui::Ui::new(
+        events,
+        terminal,
+        args.into_iter().map(|arg| ui::ProcessSettings {
+            initial_title: format!("{}={}", template_placeholder, arg),
+        }),
+    );
 
-            terminal.draw(|f| render_ui(&state, num_outputs, f))?;
+    ui.draw()?;
 
-            Ok(event)
-        })
-        .filter_map(|event| match event {
-            Event::Input(_, data) => Some(data),
-            _ => None,
-        });
-
-    Ok(output)
-}
-
-fn render_ui(
-    state: &[String],
-    num_processes: usize,
-    mut f: tui::Frame<impl tui::backend::Backend>,
-) {
-    use tui::widgets::Widget;
-
-    let chunks = tui::layout::Layout::default()
-        .direction(tui::layout::Direction::Horizontal)
-        .constraints(vec![
-            tui::layout::Constraint::Percentage(
-                (100.0 / num_processes as f64) as u16
-            );
-            num_processes
-        ])
-        .split(f.size());
-
-    for (i, output) in state.iter().enumerate() {
-        tui::widgets::Paragraph::new([tui::widgets::Text::Raw(output.into())].iter())
-            .block(
-                tui::widgets::Block::default()
-                    .borders(tui::widgets::Borders::ALL)
-                    .title(&format!("{}", i)),
-            )
-            .render(&mut f, chunks[i]);
-    }
+    Ok(ui.into_frames())
 }
 
 fn read_events(
     read: impl std::io::Read + Send + 'static,
-) -> impl futures::stream::Stream<Item = Event, Error = failure::Error> + Send + 'static {
+) -> impl futures::stream::Stream<Item = ui::Event, Error = failure::Error> + Send + 'static {
     use futures::stream::Stream;
     use termion::input::TermReadEventsAndRaw;
 
     let event_iterator = read.events_and_raw();
 
     let raw_events_stream =
-        stream_utils::blocking_iter_to_stream(event_iterator.take_while(|e| match e {
+        streams::blocking_iter_to_stream(event_iterator.take_while(|e| match e {
             Ok((termion::event::Event::Key(termion::event::Key::Ctrl('t')), _)) => false,
             _ => true,
         }))
         .map_err(failure::Error::from);
 
     raw_events_stream.and_then(move |event| match event? {
-        (event, data) => Ok(Event::Input(event, data.into())),
+        (event, data) => Ok(ui::Event::Input(event, data.into())),
     })
 }
 
 async fn forward_stdin(
-    inputs: Vec<
-        impl futures::sink::Sink<SinkItem = bytes::Bytes, SinkError = failure::Error> + Send + 'static,
-    >,
+    inputs: Vec<process::Write>,
     stdin: impl futures::stream::Stream<Item = bytes::BytesMut, Error = failure::Error> + Send + 'static,
 ) -> Result<
     impl futures::stream::Stream<Item = bytes::Bytes, Error = failure::Error> + Send + 'static,
@@ -251,7 +205,7 @@ async fn forward_stdin(
 
     let (rest, _) = await!(stdin
         .map(bytes::BytesMut::freeze)
-        .forward(fanout::Fanout::new(inputs)))?;
+        .forward(sinks::Fanout::new(inputs.into_iter().map(|p| p.input))))?;
 
     Ok(rest)
 }

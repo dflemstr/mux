@@ -1,7 +1,6 @@
 use std::fs;
 use std::io;
 use std::ops;
-use std::os::unix;
 
 use crate::sys;
 
@@ -11,7 +10,6 @@ pub struct Tty {
 
 pub struct Raw {
     tty: Tty,
-    fd: unix::io::RawFd,
     prev_ios: sys::Termios,
 }
 
@@ -22,19 +20,16 @@ impl Tty {
     }
 
     pub fn into_raw_mode(self) -> Result<Raw, failure::Error> {
-        use std::os::unix::io::AsRawFd;
-
-        let tty = self;
-        let fd = tty.file.as_raw_fd();
-
-        let mut ios = sys::attr::get(fd)?;
+        let mut ios = sys::attr::get(&self.file)?;
         let prev_ios = ios;
 
         sys::attr::make_raw(&mut ios);
 
-        sys::attr::set(fd, &ios)?;
+        sys::attr::set(&self.file, &ios)?;
 
-        Ok(Raw { tty, fd, prev_ios })
+        let tty = self;
+
+        Ok(Raw { tty, prev_ios })
     }
 
     pub fn try_clone(&mut self) -> Result<Self, failure::Error> {
@@ -47,9 +42,8 @@ impl Tty {
 
 impl Raw {
     pub fn try_clone(&mut self) -> Result<Self, failure::Error> {
-        let fd = self.fd;
         let prev_ios = self.prev_ios;
-        self.tty.try_clone().map(|tty| Self { tty, fd, prev_ios })
+        self.tty.try_clone().map(|tty| Self { tty, prev_ios })
     }
 }
 
@@ -71,7 +65,7 @@ impl io::Write for Tty {
 
 impl Drop for Raw {
     fn drop(&mut self) {
-        let _ = sys::attr::set(self.fd, &self.prev_ios);
+        let _ = sys::attr::set(&self.file, &self.prev_ios);
     }
 }
 

@@ -1,11 +1,20 @@
+use std::ffi;
 use std::io;
 use std::process;
 
 pub struct Process {
-    pub index: usize,
-    pub input: Option<Input>,
-    pub output: Option<Output>,
-    pub child: tokio_pty_process::Child,
+    pub input: Input,
+    pub output: Output,
+    pub exit: Exit,
+}
+
+pub struct Write {
+    pub input: Input,
+}
+
+pub struct Read {
+    pub output: Output,
+    pub exit: Exit,
 }
 
 pub struct Input {
@@ -27,8 +36,15 @@ pub struct Output {
     >,
 }
 
+pub struct Exit {
+    future: tokio_pty_process::Child,
+}
+
 impl Process {
-    pub fn spawn(index: usize, command: String, args: Vec<String>) -> Result<Self, failure::Error> {
+    pub fn spawn(
+        command: impl AsRef<ffi::OsStr>,
+        args: &[impl AsRef<ffi::OsStr>],
+    ) -> Result<Self, failure::Error> {
         use tokio::io::AsyncRead;
         use tokio_pty_process::CommandExt;
 
@@ -40,21 +56,31 @@ impl Process {
 
         let (output, input) = pty.split();
 
-        let input = Some(Input::new(tokio::codec::FramedWrite::new(
+        let input = Input::new(tokio::codec::FramedWrite::new(
             input,
             tokio::codec::BytesCodec::new(),
-        )));
-        let output = Some(Output::new(tokio::codec::FramedRead::new(
+        ));
+        let output = Output::new(tokio::codec::FramedRead::new(
             output,
             tokio::codec::BytesCodec::new(),
-        )));
+        ));
+        let exit = Exit::new(child);
 
         Ok(Self {
-            index,
             input,
             output,
-            child,
+            exit,
         })
+    }
+
+    pub fn split(self) -> (Write, Read) {
+        let Self {
+            input,
+            output,
+            exit,
+        } = self;
+
+        (Write { input }, Read { output, exit })
     }
 }
 
@@ -81,6 +107,12 @@ impl Output {
         let stream = Some(stream);
 
         Self { stream }
+    }
+}
+
+impl Exit {
+    fn new(future: tokio_pty_process::Child) -> Self {
+        Self { future }
     }
 }
 
@@ -150,5 +182,14 @@ impl futures::stream::Stream for Output {
         } else {
             Ok(futures::Async::Ready(None))
         }
+    }
+}
+
+impl futures::future::Future for Exit {
+    type Item = std::process::ExitStatus;
+    type Error = failure::Error;
+
+    fn poll(&mut self) -> Result<futures::Async<Self::Item>, Self::Error> {
+        self.future.poll_exit().map_err(failure::Error::from)
     }
 }
