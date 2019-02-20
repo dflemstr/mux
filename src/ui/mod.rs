@@ -1,6 +1,7 @@
 mod ansi;
 mod cell;
 mod color;
+mod grid;
 mod index;
 
 pub struct Ui<B, E>
@@ -27,8 +28,23 @@ struct State {
 }
 
 struct ProcessState {
+    /// The grid
+    grid: grid::Grid,
+    /// Tracks if the next call to input will need to first handle wrapping.
+    /// This is true after the last column is set with the input function. Any
+    /// function that implicitly sets the line or column needs to set this to
+    /// false to avoid wrapping twice.
+    /// input_needs_wrap ensures that cursor.col is always valid for use into
+    /// indexing into arrays. Without it we would have to sanitize cursor.col
+    /// every time we used it.
+    input_needs_wrap: bool,
     title: String,
     mouse_cursor: ansi::MouseCursor,
+    alt_grid: grid::Grid,
+    alt: bool,
+    active_charset: ansi::CharsetIndex,
+    mode: ansi::Mode,
+    scroll_region: std::ops::Range<index::Line>,
     cursor_style: Option<ansi::CursorStyle>,
     output: String,
 }
@@ -187,7 +203,9 @@ impl ansi::Handler for ProcessState {
     }
 
     /// A character to be displayed
-    fn input(&mut self, _c: char) {}
+    fn input(&mut self, c: char) {
+        self.grid.append(c);
+    }
 
     /// Set cursor to position
     fn goto(&mut self, _: index::Line, _: index::Column) {}

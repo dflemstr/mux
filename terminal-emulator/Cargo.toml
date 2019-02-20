@@ -1,0 +1,14 @@
+[package]
+name = "terminal-emulator"
+version = "0.1.0"
+authors = ["David Flemström <david.flemstrom@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+base64 = "0.10.1"
+vte = "0.3.3"
+log = "0.4.6"
+bitflags = "1.0.4"
+static_assertions = "0.3.1"
+arraydeque = "0.4.3"
+unicode-width = "0.1.5"

@@ -23,3 +23,13 @@ pub struct Cell {
     pub bg: ansi::Color,
     pub flags: Flags,
 }
+
+impl Default for Cell {
+    fn default() -> Cell {
+        Cell::new(
+            ' ',
+            ansi::Color::Named(ansi::NamedColor::Foreground),
+            ansi::Color::Named(ansi::NamedColor::Background)
+        )
+    }
+}
