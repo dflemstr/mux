@@ -20,8 +20,6 @@ use std::str;
 use vte;
 use base64;
 use crate::index::{Column, Line, Contains};
-
-use crate::MouseCursor;
 use crate::term::color::Rgb;
 
 // Parse color arguments
@@ -105,7 +103,7 @@ pub struct Processor {
 }
 
 /// Internal state for VTE processor
-struct ProcessorState {
+pub struct ProcessorState {
     preceding_char: Option<char>
 }
 
@@ -113,8 +111,8 @@ struct ProcessorState {
 ///
 /// Processor creates a Performer when running advance and passes the Performer
 /// to `vte::Parser`.
-struct Performer<'a, H: Handler + TermInfo, W: io::Write> {
-    _state: &'a mut ProcessorState,
+pub struct Performer<'a, H: Handler + TermInfo, W: io::Write> {
+    state: &'a mut ProcessorState,
     handler: &'a mut H,
     writer: &'a mut W
 }
@@ -128,7 +126,7 @@ impl<'a, H: Handler + TermInfo + 'a, W: io::Write> Performer<'a, H, W> {
         writer: &'b mut W,
     ) -> Performer<'b, H, W> {
         Performer {
-            _state: state,
+            state,
             handler,
             writer,
         }
@@ -170,6 +168,14 @@ pub trait TermInfo {
     fn lines(&self) -> Line;
     fn cols(&self) -> Column;
 }
+
+/// Facade around [winit's `MouseCursor`](glutin::MouseCursor)
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum MouseCursor {
+    Arrow,
+    Text,
+}
+
 
 /// Type that handles actions from the parser
 ///
@@ -703,7 +709,7 @@ impl<'a, H, W> vte::Perform for Performer<'a, H, W>
     #[inline]
     fn print(&mut self, c: char) {
         self.handler.input(c);
-        self._state.preceding_char = Some(c);
+        self.state.preceding_char = Some(c);
     }
 
     #[inline]
@@ -926,7 +932,7 @@ impl<'a, H, W> vte::Perform for Performer<'a, H, W>
                 handler.move_up(Line(arg_or_default!(idx: 0, default: 1) as usize));
             },
             'b' => {
-                if let Some(c) = self._state.preceding_char {
+                if let Some(c) = self.state.preceding_char {
                     for _ in 0..arg_or_default!(idx: 0, default: 1) {
                         handler.input(c);
                     }

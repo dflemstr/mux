@@ -1,5 +1,6 @@
 use crate::term;
 
+#[derive(Debug, Default)]
 pub struct Config {
     colors: Colors,
 }

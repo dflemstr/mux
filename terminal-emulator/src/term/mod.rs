@@ -21,12 +21,11 @@ use std::time::{Duration, Instant};
 use arraydeque::ArrayDeque;
 use unicode_width::UnicodeWidthChar;
 
-use crate::ansi::{self, Color, NamedColor, Attr, Handler, CharsetIndex, StandardCharset, CursorStyle};
+use crate::ansi::{self, Color, NamedColor, MouseCursor, Attr, Handler, CharsetIndex, StandardCharset, CursorStyle};
 use crate::config;
 use crate::grid::{BidirectionalIterator, Grid, Indexed, IndexRegion, DisplayIter, Scroll, ViewportPosition};
 use crate::index::{self, Point, Column, Line, IndexRange, Contains, RangeInclusive, Linear};
 use crate::selection::{self, Selection, Locations};
-use crate::MouseCursor;
 use crate::term::color::Rgb;
 use crate::term::cell::{LineLength, Cell};
 
@@ -983,11 +982,9 @@ impl Term {
     /// A renderable cell is any cell which has content other than the default
     /// background color.  Cells with an alternate background color are
     /// considered renderable as are cells with any text content.
-    pub fn renderable_cells<'b>(
-        &'b self,
-        config: &'b config::Config,
-        window_focused: bool,
-    ) -> RenderableCellsIter<'_> {
+    pub fn renderable_cells(
+        &self,
+    ) -> RenderableCellsIter {
         let alt_screen = self.mode.contains(TermMode::ALT_SCREEN);
         let selection = self.grid.selection.as_ref()
             .and_then(|s| s.to_span(self, alt_screen))
@@ -1193,6 +1190,12 @@ impl ansi::Handler for Term {
         self.next_mouse_cursor = Some(cursor);
     }
 
+    #[inline]
+    fn set_cursor_style(&mut self, style: Option<CursorStyle>) {
+        trace!("Setting cursor style {:?}", style);
+        self.cursor_style = style;
+    }
+
     /// A character to be displayed
     #[inline]
     fn input(&mut self, c: char) {
@@ -1285,16 +1288,6 @@ impl ansi::Handler for Term {
     }
 
     #[inline]
-    fn dectest(&mut self) {
-        trace!("Dectesting");
-        let mut template = self.cursor.template;
-        template.c = 'E';
-
-        self.grid.region_mut(..)
-            .each(|c| c.reset(&template));
-    }
-
-    #[inline]
     fn goto(&mut self, line: Line, col: Column) {
         trace!("Going to: line={}, col={}", line, col);
         let (y_offset, max_y) = if self.mode.contains(mode::TermMode::ORIGIN) {
@@ -1362,20 +1355,6 @@ impl ansi::Handler for Term {
     }
 
     #[inline]
-    fn move_forward(&mut self, cols: Column) {
-        trace!("Moving forward: {}", cols);
-        self.cursor.point.col = min(self.cursor.point.col + cols, self.grid.num_cols() - 1);
-        self.input_needs_wrap = false;
-    }
-
-    #[inline]
-    fn move_backward(&mut self, cols: Column) {
-        trace!("Moving backward: {}", cols);
-        self.cursor.point.col -= min(self.cursor.point.col, cols);
-        self.input_needs_wrap = false;
-    }
-
-    #[inline]
     fn identify_terminal<W: io::Write>(&mut self, writer: &mut W) {
         let _ = writer.write_all(b"\x1b[?6c");
     }
@@ -1393,6 +1372,20 @@ impl ansi::Handler for Term {
             },
             _ => debug!("unknown device status query: {}", arg),
         };
+    }
+
+    #[inline]
+    fn move_forward(&mut self, cols: Column) {
+        trace!("Moving forward: {}", cols);
+        self.cursor.point.col = min(self.cursor.point.col + cols, self.grid.num_cols() - 1);
+        self.input_needs_wrap = false;
+    }
+
+    #[inline]
+    fn move_backward(&mut self, cols: Column) {
+        trace!("Moving backward: {}", cols);
+        self.cursor.point.col -= min(self.cursor.point.col, cols);
+        self.input_needs_wrap = false;
     }
 
     #[inline]
@@ -1665,29 +1658,6 @@ impl ansi::Handler for Term {
         }
     }
 
-    /// Set the indexed color value
-    #[inline]
-    fn set_color(&mut self, index: usize, color: Rgb) {
-        trace!("Setting color[{}] = {:?}", index, color);
-        self.colors[index] = color;
-        self.color_modified[index] = true;
-    }
-
-    /// Reset the indexed color to original value
-    #[inline]
-    fn reset_color(&mut self, index: usize) {
-        trace!("Reseting color[{}]", index);
-        self.colors[index] = self.original_colors[index];
-        self.color_modified[index] = false;
-    }
-
-    /// Set the clipboard
-    #[inline]
-    fn set_clipboard(&mut self, string: &str)
-    {
-        // TODO
-    }
-
     #[inline]
     fn clear_screen(&mut self, mode: ansi::ClearMode) {
         trace!("Clearing screen: {:?}", mode);
@@ -1904,21 +1874,48 @@ impl ansi::Handler for Term {
     }
 
     #[inline]
-    fn configure_charset(&mut self, index: CharsetIndex, charset: StandardCharset) {
-        trace!("Configuring charset {:?} as {:?}", index, charset);
-        self.cursor.charsets[index] = charset;
-    }
-
-    #[inline]
     fn set_active_charset(&mut self, index: CharsetIndex) {
         trace!("Setting active charset {:?}", index);
         self.active_charset = index;
     }
 
     #[inline]
-    fn set_cursor_style(&mut self, style: Option<CursorStyle>) {
-        trace!("Setting cursor style {:?}", style);
-        self.cursor_style = style;
+    fn configure_charset(&mut self, index: CharsetIndex, charset: StandardCharset) {
+        trace!("Configuring charset {:?} as {:?}", index, charset);
+        self.cursor.charsets[index] = charset;
+    }
+
+    /// Set the indexed color value
+    #[inline]
+    fn set_color(&mut self, index: usize, color: Rgb) {
+        trace!("Setting color[{}] = {:?}", index, color);
+        self.colors[index] = color;
+        self.color_modified[index] = true;
+    }
+
+    /// Reset the indexed color to original value
+    #[inline]
+    fn reset_color(&mut self, index: usize) {
+        trace!("Reseting color[{}]", index);
+        self.colors[index] = self.original_colors[index];
+        self.color_modified[index] = false;
+    }
+
+    /// Set the clipboard
+    #[inline]
+    fn set_clipboard(&mut self, _string: &str)
+    {
+        // TODO
+    }
+
+    #[inline]
+    fn dectest(&mut self) {
+        trace!("Dectesting");
+        let mut template = self.cursor.template;
+        template.c = 'E';
+
+        self.grid.region_mut(..)
+            .each(|c| c.reset(&template));
     }
 }
 
@@ -1958,8 +1955,6 @@ impl IndexMut<Column> for TabStops {
 
 #[cfg(test)]
 mod tests {
-    use serde_json;
-
     use super::{Cell, Term, SizeInfo};
     use crate::term::cell;
 
@@ -1968,10 +1963,7 @@ mod tests {
     use crate::ansi::{self, Handler, CharsetIndex, StandardCharset};
     use crate::selection::Selection;
     use std::mem;
-    use crate::input::FONT_SIZE_STEP;
-    use font::Size;
     use crate::config::Config;
-    use crate::message_bar::MessageBuffer;
 
     #[test]
     fn semantic_selection_works() {
@@ -1984,7 +1976,7 @@ mod tests {
             padding_y: 0.0,
             dpr: 1.0,
         };
-        let mut term = Term::new(&Default::default(), size, MessageBuffer::new());
+        let mut term = Term::new(&Default::default(), size);
         let mut grid: Grid<Cell> = Grid::new(Line(3), Column(5), 0, Cell::default());
         for i in 0..5 {
             for j in 0..2 {
@@ -2028,7 +2020,7 @@ mod tests {
             padding_y: 0.0,
             dpr: 1.0,
         };
-        let mut term = Term::new(&Default::default(), size, MessageBuffer::new());
+        let mut term = Term::new(&Default::default(), size);
         let mut grid: Grid<Cell> = Grid::new(Line(1), Column(5), 0, Cell::default());
         for i in 0..5 {
             grid[Line(0)][Column(i)].c = 'a';
@@ -2054,7 +2046,7 @@ mod tests {
             padding_y: 0.0,
             dpr: 1.0,
         };
-        let mut term = Term::new(&Default::default(), size, MessageBuffer::new());
+        let mut term = Term::new(&Default::default(), size);
         let mut grid: Grid<Cell> = Grid::new(Line(3), Column(3), 0, Cell::default());
         for l in 0..3 {
             if l != 1 {
@@ -2072,22 +2064,6 @@ mod tests {
         assert_eq!(term.selection_to_string(), Some("aaa\n\naaa\n".into()));
     }
 
-    /// Check that the grid can be serialized back and forth losslessly
-    ///
-    /// This test is in the term module as opposed to the grid since we want to
-    /// test this property with a T=Cell.
-    #[test]
-    fn grid_serde() {
-        let template = Cell::default();
-
-        let grid: Grid<Cell> = Grid::new(Line(24), Column(80), 0, template);
-        let serialized = serde_json::to_string(&grid).expect("ser");
-        let deserialized = serde_json::from_str::<Grid<Cell>>(&serialized)
-            .expect("de");
-
-        assert_eq!(deserialized, grid);
-    }
-
     #[test]
     fn input_line_drawing_character() {
         let size = SizeInfo {
@@ -2099,82 +2075,13 @@ mod tests {
             padding_y: 0.0,
             dpr: 1.0,
         };
-        let mut term = Term::new(&Default::default(), size, MessageBuffer::new());
+        let mut term = Term::new(&Default::default(), size);
         let cursor = Point::new(Line(0), Column(0));
         term.configure_charset(CharsetIndex::G0,
                                StandardCharset::SpecialCharacterAndLineDrawing);
         term.input('a');
 
         assert_eq!(term.grid()[&cursor].c, '▒');
-    }
-
-    fn change_font_size_works(font_size: f32) {
-        let size = SizeInfo {
-            width: 21.0,
-            height: 51.0,
-            cell_width: 3.0,
-            cell_height: 3.0,
-            padding_x: 0.0,
-            padding_y: 0.0,
-            dpr: 1.0,
-        };
-        let config: Config = Default::default();
-        let mut term: Term = Term::new(&config, size, MessageBuffer::new());
-        term.change_font_size(font_size);
-
-        let expected_font_size: Size = config.font().size() + Size::new(font_size);
-        assert_eq!(term.font_size, expected_font_size);
-    }
-
-    #[test]
-    fn increase_font_size_works() {
-        change_font_size_works(10.0);
-    }
-
-    #[test]
-    fn decrease_font_size_works() {
-        change_font_size_works(-10.0);
-    }
-
-    #[test]
-    fn prevent_font_below_threshold_works() {
-        let size = SizeInfo {
-            width: 21.0,
-            height: 51.0,
-            cell_width: 3.0,
-            cell_height: 3.0,
-            padding_x: 0.0,
-            padding_y: 0.0,
-            dpr: 1.0,
-        };
-        let config: Config = Default::default();
-        let mut term: Term = Term::new(&config, size, MessageBuffer::new());
-
-        term.change_font_size(-100.0);
-
-        let expected_font_size: Size = Size::new(FONT_SIZE_STEP);
-        assert_eq!(term.font_size, expected_font_size);
-    }
-
-    #[test]
-    fn reset_font_size_works() {
-        let size = SizeInfo {
-            width: 21.0,
-            height: 51.0,
-            cell_width: 3.0,
-            cell_height: 3.0,
-            padding_x: 0.0,
-            padding_y: 0.0,
-            dpr: 1.0,
-        };
-        let config: Config = Default::default();
-        let mut term: Term = Term::new(&config, size, MessageBuffer::new());
-
-        term.change_font_size(10.0);
-        term.reset_font_size();
-
-        let expected_font_size: Size = config.font().size();
-        assert_eq!(term.font_size, expected_font_size);
     }
 
     #[test]
@@ -2189,7 +2096,7 @@ mod tests {
             dpr: 1.0
         };
         let config: Config = Default::default();
-        let mut term: Term = Term::new(&config, size, MessageBuffer::new());
+        let mut term: Term = Term::new(&config, size);
 
         // Add one line of scrollback
         term.grid.scroll_up(&(Line(0)..Line(1)), Line(1), &Cell::default());
@@ -2207,7 +2114,6 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     extern crate test;
-    extern crate serde_json as json;
 
     use std::io::Read;
     use std::fs::File;
@@ -2255,7 +2161,7 @@ mod benches {
 
         let config = Config::default();
 
-        let mut terminal = Term::new(&config, size, MessageBuffer::new());
+        let mut terminal = Term::new(&config, size);
         mem::swap(&mut terminal.grid, &mut grid);
 
         b.iter(|| {

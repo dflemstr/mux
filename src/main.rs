@@ -2,8 +2,6 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 #[macro_use]
-extern crate bitflags;
-#[macro_use]
 extern crate log;
 #[macro_use]
 extern crate structopt;
@@ -126,7 +124,7 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
 
 fn run_gui(
     process_reads: Vec<process::Read>,
-    mut terminal: tui::Terminal<impl tui::backend::Backend + 'static>,
+    terminal: tui::Terminal<impl tui::backend::Backend + 'static>,
     events: impl futures::stream::Stream<Item = ui::Event, Error = failure::Error>,
     args: Vec<String>,
     template_placeholder: String,
@@ -134,11 +132,10 @@ fn run_gui(
     use futures::future::Future;
     use futures::stream::Stream;
 
-    let mut state = process_reads
+    let state = process_reads
         .iter()
         .map(|_| String::new())
         .collect::<Vec<_>>();
-    let num_outputs = process_reads.len();
 
     let (outputs, exits): (Vec<_>, Vec<_>) = process_reads
         .into_iter()
