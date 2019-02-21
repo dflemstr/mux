@@ -133,28 +133,37 @@ impl ProcessState {
     fn from_settings(settings: ProcessSettings) -> Self {
         use terminal_emulator::Handler;
 
-        let mut terminal_emulator = terminal_emulator::term::Term::new(&terminal_emulator::Config::default(), terminal_emulator::term::SizeInfo {
-            width: 80.0,
-            height: 24.0,
-            cell_width: 1.0,
-            cell_height: 1.0,
-            padding_x: 0.0,
-            padding_y: 0.0,
-            dpr: 1.0
-        });
+        let mut terminal_emulator = terminal_emulator::term::Term::new(
+            &terminal_emulator::Config::default(),
+            terminal_emulator::term::SizeInfo {
+                width: 80.0,
+                height: 24.0,
+                cell_width: 1.0,
+                cell_height: 1.0,
+                padding_x: 0.0,
+                padding_y: 0.0,
+                dpr: 1.0,
+            },
+        );
         let processor = terminal_emulator::Processor::new();
         let exit_status = None;
 
         terminal_emulator.set_title(&settings.initial_title);
         let title = settings.initial_title;
 
-        Self { terminal_emulator, processor, title, exit_status }
+        Self {
+            terminal_emulator,
+            processor,
+            title,
+            exit_status,
+        }
     }
 
     fn on_data(&mut self, data: bytes::Bytes) -> Result<(), failure::Error> {
         for byte in data {
             // TODO: maybe do something smarter than passing sink() here
-            self.processor.advance(&mut self.terminal_emulator, byte, &mut std::io::sink());
+            self.processor
+                .advance(&mut self.terminal_emulator, byte, &mut std::io::sink());
         }
 
         if let Some(title) = self.terminal_emulator.get_next_title() {
@@ -171,7 +180,9 @@ impl ProcessState {
 
 impl tui::widgets::Widget for ProcessState {
     fn draw(&mut self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
-        let mut block = tui::widgets::Block::default().title(&self.title).borders(tui::widgets::Borders::ALL);
+        let mut block = tui::widgets::Block::default()
+            .title(&self.title)
+            .borders(tui::widgets::Borders::ALL);
         block.draw(area, buf);
         let inner_area = block.inner(area);
 

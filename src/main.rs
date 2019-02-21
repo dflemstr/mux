@@ -179,16 +179,21 @@ fn read_events(
 
     let event_iterator = read.events_and_raw();
 
-    let raw_events_stream =
-        streams::blocking_iter_to_stream(event_iterator.take_while(|e| match e {
-            Ok((termion::event::Event::Key(termion::event::Key::Ctrl('t')), _)) => false,
-            _ => true,
-        }))
-        .map_err(failure::Error::from);
+    let raw_events_stream = streams::blocking_iter_to_stream(
+        event_iterator
+            .inspect(|e| debug!("received tty event: {:?}", e))
+            .take_while(|e| match e {
+                Ok((termion::event::Event::Key(termion::event::Key::Ctrl('t')), _)) => false,
+                _ => true,
+            }),
+    )
+    .map_err(failure::Error::from);
 
-    raw_events_stream.and_then(move |event| match event? {
-        (event, data) => Ok(ui::Event::Input(event, data.into())),
-    })
+    raw_events_stream
+        .and_then(move |event| match event? {
+            (event, data) => Ok(ui::Event::Input(event, data.into())),
+        })
+        .fuse()
 }
 
 async fn forward_stdin(

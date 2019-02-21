@@ -102,10 +102,18 @@ pub fn blocking_iter_to_stream<A>(
     mut iter: impl Iterator<Item = A> + Send + 'static,
 ) -> impl futures::stream::Stream<Item = A, Error = tokio_threadpool::BlockingError>
 where
-    A: Send + 'static,
+    A: Send + fmt::Debug + 'static,
 {
+    use futures::stream::Stream;
     futures::sync::mpsc::spawn(
-        futures::stream::poll_fn(move || tokio_threadpool::blocking(|| iter.next())),
+        futures::stream::poll_fn(move || {
+            tokio_threadpool::blocking(|| {
+                debug!("awaiting next element");
+                let item = iter.next();
+                debug!("read next element: {:?}", item);
+                item
+            })
+        }),
         &tokio::executor::DefaultExecutor::current(),
         0,
     )
