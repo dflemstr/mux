@@ -13,7 +13,7 @@
 // limitations under the License.
 use bitflags::bitflags;
 
-use crate::ansi::{NamedColor, Color};
+use crate::ansi::{Color, NamedColor};
 use crate::grid;
 use crate::index::Column;
 
@@ -54,10 +54,9 @@ impl Default for Cell {
         Cell::new(
             ' ',
             Color::Named(NamedColor::Foreground),
-            Color::Named(NamedColor::Background)
+            Color::Named(NamedColor::Background),
         )
     }
-
 }
 
 /// Get the length of occupied cells in a line
@@ -116,7 +115,9 @@ impl Cell {
         (self.c == ' ' || self.c == '\t')
             && self.extra[0] == ' '
             && self.bg == Color::Named(NamedColor::Background)
-            && !self.flags.intersects(Flags::INVERSE | Flags::UNDERLINE | Flags::STRIKEOUT)
+            && !self
+                .flags
+                .intersects(Flags::INVERSE | Flags::UNDERLINE | Flags::STRIKEOUT)
     }
 
     #[inline]

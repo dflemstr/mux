@@ -14,8 +14,8 @@
 
 //! Tests for the Gird
 
-use super::{Grid, BidirectionalIterator};
-use crate::index::{Point, Line, Column};
+use super::{BidirectionalIterator, Grid};
+use crate::index::{Column, Line, Point};
 
 // Scroll up moves lines upwards
 #[test]
@@ -87,7 +87,7 @@ fn test_iter() {
     let mut grid = Grid::new(Line(5), Column(5), 0, 0);
     for i in 0..5 {
         for j in 0..5 {
-            grid[Line(i)][Column(j)] = i*5 + j;
+            grid[Line(i)][Column(j)] = i * 5 + j;
         }
     }
 
@@ -113,7 +113,6 @@ fn test_iter() {
     assert_eq!(Some(&4), iter.prev());
     assert_eq!(Column(4), iter.cur.col);
     assert_eq!(4, iter.cur.line);
-
 
     // test that iter ends at end of grid
     let mut final_iter = grid.iter_from(Point {

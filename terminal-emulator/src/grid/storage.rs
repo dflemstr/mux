@@ -16,8 +16,8 @@ use std::slice;
 
 use static_assertions::assert_eq_size;
 
-use crate::index::Line;
 use super::Row;
+use crate::index::Line;
 
 /// Maximum number of invisible lines before buffer is resized
 const TRUNCATE_STEP: usize = 100;
@@ -72,17 +72,17 @@ impl<T: PartialEq> ::std::cmp::PartialEq for Storage<T> {
         bigger.inner[bigger_zero..]
             == smaller.inner[smaller_zero..smaller_zero + (len - bigger_zero)]
             && bigger.inner[..bigger_zero - smaller_zero]
-            == smaller.inner[smaller_zero + (len - bigger_zero)..]
+                == smaller.inner[smaller_zero + (len - bigger_zero)..]
             && bigger.inner[bigger_zero - smaller_zero..bigger_zero]
-            == smaller.inner[..smaller_zero]
+                == smaller.inner[..smaller_zero]
     }
 }
 
 impl<T> Storage<T> {
     #[inline]
     pub fn with_capacity(lines: Line, template: Row<T>) -> Storage<T>
-        where
-            T: Clone,
+    where
+        T: Clone,
     {
         // Initialize visible lines, the scrollback buffer is initialized dynamically
         let inner = vec![template; lines.0];
@@ -97,8 +97,8 @@ impl<T> Storage<T> {
 
     /// Update the size of the scrollback history
     pub fn update_history(&mut self, history_size: usize, template_row: Row<T>)
-        where
-            T: Clone,
+    where
+        T: Clone,
     {
         let current_history = self.len - (self.visible_lines.0 + 1);
         if history_size > current_history {
@@ -110,8 +110,8 @@ impl<T> Storage<T> {
 
     /// Increase the number of lines in the buffer
     pub fn grow_visible_lines(&mut self, next: Line, template_row: Row<T>)
-        where
-            T: Clone,
+    where
+        T: Clone,
     {
         // Number of lines the buffer needs to grow
         let growage = (next - (self.visible_lines + 1)).0;
@@ -123,8 +123,8 @@ impl<T> Storage<T> {
 
     /// Grow the number of lines in the buffer, filling new lines with the template
     fn grow_lines(&mut self, growage: usize, template_row: Row<T>)
-        where
-            T: Clone,
+    where
+        T: Clone,
     {
         // Only grow if there are not enough lines still hidden
         let mut new_growage = 0;
@@ -178,7 +178,8 @@ impl<T> Storage<T> {
 
     /// Dynamically grow the storage buffer at runtime
     pub fn initialize(&mut self, num_rows: usize, template_row: Row<T>)
-        where T: Clone
+    where
+        T: Clone,
     {
         let mut new = vec![template_row; num_rows];
 
@@ -325,7 +326,11 @@ use crate::index::Column;
 fn grow_after_zero() {
     // Setup storage area
     let mut storage = Storage {
-        inner: vec![Row::new(Column(1), &'0'), Row::new(Column(1), &'1'), Row::new(Column(1), &'-')],
+        inner: vec![
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+            Row::new(Column(1), &'-'),
+        ],
         zero: 0,
         visible_lines: Line(2),
         len: 3,
@@ -336,7 +341,12 @@ fn grow_after_zero() {
 
     // Make sure the result is correct
     let expected = Storage {
-        inner: vec![Row::new(Column(1), &'-'), Row::new(Column(1), &'0'), Row::new(Column(1), &'1'), Row::new(Column(1), &'-')],
+        inner: vec![
+            Row::new(Column(1), &'-'),
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+            Row::new(Column(1), &'-'),
+        ],
         zero: 1,
         visible_lines: Line(0),
         len: 4,
@@ -361,7 +371,11 @@ fn grow_after_zero() {
 fn grow_before_zero() {
     // Setup storage area
     let mut storage = Storage {
-        inner: vec![Row::new(Column(1), &'-'), Row::new(Column(1), &'0'), Row::new(Column(1), &'1')],
+        inner: vec![
+            Row::new(Column(1), &'-'),
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+        ],
         zero: 1,
         visible_lines: Line(2),
         len: 3,
@@ -372,7 +386,12 @@ fn grow_before_zero() {
 
     // Make sure the result is correct
     let expected = Storage {
-        inner: vec![Row::new(Column(1), &'-'), Row::new(Column(1), &'-'), Row::new(Column(1), &'0'), Row::new(Column(1), &'1')],
+        inner: vec![
+            Row::new(Column(1), &'-'),
+            Row::new(Column(1), &'-'),
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+        ],
         zero: 2,
         visible_lines: Line(0),
         len: 4,
@@ -396,7 +415,11 @@ fn grow_before_zero() {
 fn shrink_before_zero() {
     // Setup storage area
     let mut storage = Storage {
-        inner: vec![Row::new(Column(1), &'2'), Row::new(Column(1), &'0'), Row::new(Column(1), &'1')],
+        inner: vec![
+            Row::new(Column(1), &'2'),
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+        ],
         zero: 1,
         visible_lines: Line(2),
         len: 3,
@@ -407,7 +430,11 @@ fn shrink_before_zero() {
 
     // Make sure the result is correct
     let expected = Storage {
-        inner: vec![Row::new(Column(1), &'2'), Row::new(Column(1), &'0'), Row::new(Column(1), &'1')],
+        inner: vec![
+            Row::new(Column(1), &'2'),
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+        ],
         zero: 1,
         visible_lines: Line(0),
         len: 2,
@@ -431,7 +458,11 @@ fn shrink_before_zero() {
 fn shrink_after_zero() {
     // Setup storage area
     let mut storage = Storage {
-        inner: vec![Row::new(Column(1), &'0'), Row::new(Column(1), &'1'), Row::new(Column(1), &'2')],
+        inner: vec![
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+            Row::new(Column(1), &'2'),
+        ],
         zero: 0,
         visible_lines: Line(2),
         len: 3,
@@ -442,7 +473,11 @@ fn shrink_after_zero() {
 
     // Make sure the result is correct
     let expected = Storage {
-        inner: vec![Row::new(Column(1), &'0'), Row::new(Column(1), &'1'), Row::new(Column(1), &'2')],
+        inner: vec![
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+            Row::new(Column(1), &'2'),
+        ],
         zero: 0,
         visible_lines: Line(0),
         len: 2,
@@ -472,7 +507,14 @@ fn shrink_after_zero() {
 fn shrink_before_and_after_zero() {
     // Setup storage area
     let mut storage = Storage {
-        inner: vec![Row::new(Column(1), &'4'), Row::new(Column(1), &'5'), Row::new(Column(1), &'0'), Row::new(Column(1), &'1'), Row::new(Column(1), &'2'), Row::new(Column(1), &'3')],
+        inner: vec![
+            Row::new(Column(1), &'4'),
+            Row::new(Column(1), &'5'),
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+            Row::new(Column(1), &'2'),
+            Row::new(Column(1), &'3'),
+        ],
         zero: 2,
         visible_lines: Line(5),
         len: 6,
@@ -483,7 +525,14 @@ fn shrink_before_and_after_zero() {
 
     // Make sure the result is correct
     let expected = Storage {
-        inner: vec![Row::new(Column(1), &'4'), Row::new(Column(1), &'5'), Row::new(Column(1), &'0'), Row::new(Column(1), &'1'), Row::new(Column(1), &'2'), Row::new(Column(1), &'3')],
+        inner: vec![
+            Row::new(Column(1), &'4'),
+            Row::new(Column(1), &'5'),
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+            Row::new(Column(1), &'2'),
+            Row::new(Column(1), &'3'),
+        ],
         zero: 2,
         visible_lines: Line(0),
         len: 2,
@@ -509,7 +558,14 @@ fn shrink_before_and_after_zero() {
 fn truncate_invisible_lines() {
     // Setup storage area
     let mut storage = Storage {
-        inner: vec![Row::new(Column(1), &'4'), Row::new(Column(1), &'5'), Row::new(Column(1), &'0'), Row::new(Column(1), &'1'), Row::new(Column(1), &'2'), Row::new(Column(1), &'3')],
+        inner: vec![
+            Row::new(Column(1), &'4'),
+            Row::new(Column(1), &'5'),
+            Row::new(Column(1), &'0'),
+            Row::new(Column(1), &'1'),
+            Row::new(Column(1), &'2'),
+            Row::new(Column(1), &'3'),
+        ],
         zero: 2,
         visible_lines: Line(1),
         len: 2,
@@ -544,7 +600,11 @@ fn truncate_invisible_lines() {
 fn truncate_invisible_lines_beginning() {
     // Setup storage area
     let mut storage = Storage {
-        inner: vec![Row::new(Column(1), &'1'), Row::new(Column(1), &'2'), Row::new(Column(1), &'0')],
+        inner: vec![
+            Row::new(Column(1), &'1'),
+            Row::new(Column(1), &'2'),
+            Row::new(Column(1), &'0'),
+        ],
         zero: 2,
         visible_lines: Line(1),
         len: 2,

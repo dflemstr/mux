@@ -14,9 +14,9 @@
 
 //! Defines the Row type which makes up lines in the grid
 
-use std::ops::{Index, IndexMut};
-use std::ops::{Range, RangeTo, RangeFrom, RangeFull, RangeToInclusive};
 use std::cmp::{max, min};
+use std::ops::{Index, IndexMut};
+use std::ops::{Range, RangeFrom, RangeFull, RangeTo, RangeToInclusive};
 use std::slice;
 
 use crate::index::Column;
@@ -52,7 +52,7 @@ impl<T: Copy + Clone> Row<T> {
     }
 
     pub fn grow(&mut self, cols: Column, template: &T) {
-        assert!(self.len() < * cols);
+        assert!(self.len() < *cols);
 
         while self.len() != *cols {
             self.inner.push(*template);
@@ -89,7 +89,6 @@ impl<T> Row<T> {
         self.inner.iter()
     }
 }
-
 
 impl<'a, T> IntoIterator for &'a Row<T> {
     type Item = &'a T;

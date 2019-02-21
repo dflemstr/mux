@@ -79,27 +79,91 @@ impl Default for Colors {
 
 fn default_normal_colors() -> AnsiColors {
     AnsiColors {
-        black: term::color::Rgb {r: 0x00, g: 0x00, b: 0x00},
-        red: term::color::Rgb {r: 0xd5, g: 0x4e, b: 0x53},
-        green: term::color::Rgb {r: 0xb9, g: 0xca, b: 0x4a},
-        yellow: term::color::Rgb {r: 0xe6, g: 0xc5, b: 0x47},
-        blue: term::color::Rgb {r: 0x7a, g: 0xa6, b: 0xda},
-        magenta: term::color::Rgb {r: 0xc3, g: 0x97, b: 0xd8},
-        cyan: term::color::Rgb {r: 0x70, g: 0xc0, b: 0xba},
-        white: term::color::Rgb {r: 0xea, g: 0xea, b: 0xea},
+        black: term::color::Rgb {
+            r: 0x00,
+            g: 0x00,
+            b: 0x00,
+        },
+        red: term::color::Rgb {
+            r: 0xd5,
+            g: 0x4e,
+            b: 0x53,
+        },
+        green: term::color::Rgb {
+            r: 0xb9,
+            g: 0xca,
+            b: 0x4a,
+        },
+        yellow: term::color::Rgb {
+            r: 0xe6,
+            g: 0xc5,
+            b: 0x47,
+        },
+        blue: term::color::Rgb {
+            r: 0x7a,
+            g: 0xa6,
+            b: 0xda,
+        },
+        magenta: term::color::Rgb {
+            r: 0xc3,
+            g: 0x97,
+            b: 0xd8,
+        },
+        cyan: term::color::Rgb {
+            r: 0x70,
+            g: 0xc0,
+            b: 0xba,
+        },
+        white: term::color::Rgb {
+            r: 0xea,
+            g: 0xea,
+            b: 0xea,
+        },
     }
 }
 
 fn default_bright_colors() -> AnsiColors {
     AnsiColors {
-        black: term::color::Rgb {r: 0x66, g: 0x66, b: 0x66},
-        red: term::color::Rgb {r: 0xff, g: 0x33, b: 0x34},
-        green: term::color::Rgb {r: 0x9e, g: 0xc4, b: 0x00},
-        yellow: term::color::Rgb {r: 0xe7, g: 0xc5, b: 0x47},
-        blue: term::color::Rgb {r: 0x7a, g: 0xa6, b: 0xda},
-        magenta: term::color::Rgb {r: 0xb7, g: 0x7e, b: 0xe0},
-        cyan: term::color::Rgb {r: 0x54, g: 0xce, b: 0xd6},
-        white: term::color::Rgb {r: 0xff, g: 0xff, b: 0xff},
+        black: term::color::Rgb {
+            r: 0x66,
+            g: 0x66,
+            b: 0x66,
+        },
+        red: term::color::Rgb {
+            r: 0xff,
+            g: 0x33,
+            b: 0x34,
+        },
+        green: term::color::Rgb {
+            r: 0x9e,
+            g: 0xc4,
+            b: 0x00,
+        },
+        yellow: term::color::Rgb {
+            r: 0xe7,
+            g: 0xc5,
+            b: 0x47,
+        },
+        blue: term::color::Rgb {
+            r: 0x7a,
+            g: 0xa6,
+            b: 0xda,
+        },
+        magenta: term::color::Rgb {
+            r: 0xb7,
+            g: 0x7e,
+            b: 0xe0,
+        },
+        cyan: term::color::Rgb {
+            r: 0x54,
+            g: 0xce,
+            b: 0xd6,
+        },
+        white: term::color::Rgb {
+            r: 0xff,
+            g: 0xff,
+            b: 0xff,
+        },
     }
 }
 fn default_background() -> term::color::Rgb {
@@ -107,5 +171,9 @@ fn default_background() -> term::color::Rgb {
 }
 
 fn default_foreground() -> term::color::Rgb {
-    term::color::Rgb { r: 0xea, g: 0xea, b: 0xea }
+    term::color::Rgb {
+        r: 0xea,
+        g: 0xea,
+        b: 0xea,
+    }
 }

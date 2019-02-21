@@ -10,6 +10,6 @@ mod selection;
 
 pub mod term;
 
-pub use config::Config;
-pub use ansi::Processor;
 pub use ansi::Handler;
+pub use ansi::Processor;
+pub use config::Config;

@@ -14,10 +14,10 @@
 
 //! A specialized 2d grid implementation optimized for use in a terminal.
 
-use std::cmp::{min, max, Ordering};
-use std::ops::{Deref, Range, Index, IndexMut, RangeTo, RangeFrom, RangeFull};
+use std::cmp::{max, min, Ordering};
+use std::ops::{Deref, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo};
 
-use crate::index::{self, Point, Line, Column, IndexRange};
+use crate::index::{self, Column, IndexRange, Line, Point};
 use crate::selection::Selection;
 
 mod row;
@@ -55,12 +55,12 @@ impl<T> Deref for Indexed<T> {
 impl<T: PartialEq> ::std::cmp::PartialEq for Grid<T> {
     fn eq(&self, other: &Self) -> bool {
         // Compare struct fields and check result of grid comparison
-        self.raw.eq(&other.raw) &&
-            self.cols.eq(&other.cols) &&
-            self.lines.eq(&other.lines) &&
-            self.display_offset.eq(&other.display_offset) &&
-            self.scroll_limit.eq(&other.scroll_limit) &&
-            self.selection.eq(&other.selection)
+        self.raw.eq(&other.raw)
+            && self.cols.eq(&other.cols)
+            && self.lines.eq(&other.lines)
+            && self.display_offset.eq(&other.display_offset)
+            && self.scroll_limit.eq(&other.scroll_limit)
+            && self.selection.eq(&other.selection)
     }
 }
 
@@ -136,7 +136,7 @@ impl<T: Copy + Clone> Grid<T> {
     pub fn visible_to_buffer(&self, point: Point) -> Point<usize> {
         Point {
             line: self.visible_line_to_buffer(point.line),
-            col: point.col
+            col: point.col,
         }
     }
 
@@ -156,9 +156,9 @@ impl<T: Copy + Clone> Grid<T> {
     }
 
     /// Update the size of the scrollback history
-    pub fn update_history(&mut self, history_size: usize, template: &T)
-    {
-        self.raw.update_history(history_size, Row::new(self.cols, &template));
+    pub fn update_history(&mut self, history_size: usize, template: &T) {
+        self.raw
+            .update_history(history_size, Row::new(self.cols, &template));
         self.scroll_limit = min(self.scroll_limit, history_size);
     }
 
@@ -167,32 +167,21 @@ impl<T: Copy + Clone> Grid<T> {
             Scroll::Lines(count) => {
                 self.display_offset = min(
                     max((self.display_offset as isize) + count, 0isize) as usize,
-                    self.scroll_limit
+                    self.scroll_limit,
                 );
-            },
+            }
             Scroll::PageUp => {
-                self.display_offset = min(
-                    self.display_offset + self.lines.0,
-                    self.scroll_limit
-                );
-            },
+                self.display_offset = min(self.display_offset + self.lines.0, self.scroll_limit);
+            }
             Scroll::PageDown => {
-                self.display_offset -= min(
-                    self.display_offset,
-                    self.lines.0
-                );
-            },
+                self.display_offset -= min(self.display_offset, self.lines.0);
+            }
             Scroll::Top => self.display_offset = self.scroll_limit,
             Scroll::Bottom => self.display_offset = 0,
         }
     }
 
-    pub fn resize(
-        &mut self,
-        lines: index::Line,
-        cols: index::Column,
-        template: &T,
-    ) {
+    pub fn resize(&mut self, lines: index::Line, cols: index::Column, template: &T) {
         // Check that there's actually work to do and return early if not
         if lines == self.lines && cols == self.cols {
             return;
@@ -211,8 +200,7 @@ impl<T: Copy + Clone> Grid<T> {
         }
     }
 
-    fn increase_scroll_limit(&mut self, count: usize, template: &T)
-    {
+    fn increase_scroll_limit(&mut self, count: usize, template: &T) {
         self.scroll_limit = min(self.scroll_limit + count, self.max_scroll_limit);
 
         // Initialize new lines when the history buffer is smaller than the scroll limit
@@ -235,15 +223,12 @@ impl<T: Copy + Clone> Grid<T> {
     /// Alacritty keeps the cursor at the bottom of the terminal as long as there
     /// is scrollback available. Once scrollback is exhausted, new lines are
     /// simply added to the bottom of the screen.
-    fn grow_lines(
-        &mut self,
-        new_line_count: index::Line,
-        template: &T,
-    ) {
+    fn grow_lines(&mut self, new_line_count: index::Line, template: &T) {
         let lines_added = new_line_count - self.lines;
 
         // Need to "resize" before updating buffer
-        self.raw.grow_visible_lines(new_line_count, Row::new(self.cols, template));
+        self.raw
+            .grow_visible_lines(new_line_count, Row::new(self.cols, template));
         self.lines = new_line_count;
 
         // Move existing lines up if there is no scrollback to fill new lines
@@ -323,7 +308,7 @@ impl<T: Copy + Clone> Grid<T> {
 
             // Now, restore any scroll region lines
             let lines = self.lines;
-            for i in IndexRange(region.end .. lines) {
+            for i in IndexRange(region.end..lines) {
                 self.raw.swap_lines(i, i + positions);
             }
 
@@ -337,7 +322,7 @@ impl<T: Copy + Clone> Grid<T> {
                 self.raw.swap_lines(line, line - positions);
             }
 
-            for line in IndexRange(region.start .. (region.start + positions)) {
+            for line in IndexRange(region.start..(region.start + positions)) {
                 self.raw[line].reset(&template);
             }
         }
@@ -346,12 +331,7 @@ impl<T: Copy + Clone> Grid<T> {
     /// scroll_up moves lines at the bottom towards the top
     ///
     /// This is the performance-sensitive part of scrolling.
-    pub fn scroll_up(
-        &mut self,
-        region: &Range<index::Line>,
-        positions: index::Line,
-        template: &T
-    ) {
+    pub fn scroll_up(&mut self, region: &Range<index::Line>, positions: index::Line, template: &T) {
         if region.start == Line(0) {
             // Update display offset when not pinned to active area
             if self.display_offset != 0 {
@@ -393,7 +373,7 @@ impl<T: Copy + Clone> Grid<T> {
             }
 
             // Clear reused lines
-            for line in IndexRange((region.end - positions) .. region.end) {
+            for line in IndexRange((region.end - positions)..region.end) {
                 self.raw[line].reset(&template);
             }
         }
@@ -438,11 +418,14 @@ impl<T> Grid<T> {
 
     /// This is used only for initializing after loading ref-tests
     pub fn initialize_all(&mut self, template: &T)
-        where
-            T: Copy
+    where
+        T: Copy,
     {
         let history_size = self.raw.len().saturating_sub(*self.lines);
-        self.raw.initialize(self.max_scroll_limit - history_size, Row::new(self.cols, template));
+        self.raw.initialize(
+            self.max_scroll_limit - history_size,
+            Row::new(self.cols, template),
+        );
     }
 
     /// This is used only for truncating before saving ref-tests
@@ -475,12 +458,11 @@ impl<'a, T> Iterator for GridIterator<'a, T> {
         let last_col = self.grid.num_cols() - Column(1);
         match self.cur {
             Point { line, col } if line == 0 && col == last_col => None,
-            Point { col, .. } if
-            (col == last_col) => {
+            Point { col, .. } if (col == last_col) => {
                 self.cur.line -= 1;
                 self.cur.col = Column(0);
                 Some(&self.grid[self.cur.line][self.cur.col])
-            },
+            }
             _ => {
                 self.cur.col += Column(1);
                 Some(&self.grid[self.cur.line][self.cur.col])
@@ -494,12 +476,15 @@ impl<'a, T> BidirectionalIterator for GridIterator<'a, T> {
         let num_cols = self.grid.num_cols();
 
         match self.cur {
-            Point { line, col: Column(0) } if line == self.grid.len() - 1 => None,
+            Point {
+                line,
+                col: Column(0),
+            } if line == self.grid.len() - 1 => None,
             Point { col: Column(0), .. } => {
                 self.cur.line += 1;
                 self.cur.col = num_cols - Column(1);
                 Some(&self.grid[self.cur.line][self.cur.col])
-            },
+            }
             _ => {
                 self.cur.col -= Column(1);
                 Some(&self.grid[self.cur.line][self.cur.col])
@@ -600,7 +585,7 @@ impl<T> IndexRegion<Range<Line>, T> for Grid<T> {
         Region {
             start: index.start,
             end: index.end,
-            raw: &self.raw
+            raw: &self.raw,
         }
     }
     fn region_mut(&mut self, index: Range<Line>) -> RegionMut<'_, T> {
@@ -610,7 +595,7 @@ impl<T> IndexRegion<Range<Line>, T> for Grid<T> {
         RegionMut {
             start: index.start,
             end: index.end,
-            raw: &mut self.raw
+            raw: &mut self.raw,
         }
     }
 }
@@ -621,7 +606,7 @@ impl<T> IndexRegion<RangeTo<Line>, T> for Grid<T> {
         Region {
             start: Line(0),
             end: index.end,
-            raw: &self.raw
+            raw: &self.raw,
         }
     }
     fn region_mut(&mut self, index: RangeTo<Line>) -> RegionMut<'_, T> {
@@ -629,7 +614,7 @@ impl<T> IndexRegion<RangeTo<Line>, T> for Grid<T> {
         RegionMut {
             start: Line(0),
             end: index.end,
-            raw: &mut self.raw
+            raw: &mut self.raw,
         }
     }
 }
@@ -640,7 +625,7 @@ impl<T> IndexRegion<RangeFrom<Line>, T> for Grid<T> {
         Region {
             start: index.start,
             end: self.num_lines(),
-            raw: &self.raw
+            raw: &self.raw,
         }
     }
     fn region_mut(&mut self, index: RangeFrom<Line>) -> RegionMut<'_, T> {
@@ -648,7 +633,7 @@ impl<T> IndexRegion<RangeFrom<Line>, T> for Grid<T> {
         RegionMut {
             start: index.start,
             end: self.num_lines(),
-            raw: &mut self.raw
+            raw: &mut self.raw,
         }
     }
 }
@@ -658,7 +643,7 @@ impl<T> IndexRegion<RangeFull, T> for Grid<T> {
         Region {
             start: Line(0),
             end: self.num_lines(),
-            raw: &self.raw
+            raw: &self.raw,
         }
     }
 
@@ -666,7 +651,7 @@ impl<T> IndexRegion<RangeFull, T> for Grid<T> {
         RegionMut {
             start: Line(0),
             end: self.num_lines(),
-            raw: &mut self.raw
+            raw: &mut self.raw,
         }
     }
 }
@@ -691,7 +676,7 @@ impl<'a, T> IntoIterator for Region<'a, T> {
         RegionIter {
             end: self.end,
             cur: self.start,
-            raw: self.raw
+            raw: self.raw,
         }
     }
 }
@@ -704,7 +689,7 @@ impl<'a, T> IntoIterator for RegionMut<'a, T> {
         RegionIterMut {
             end: self.end,
             cur: self.start,
-            raw: self.raw
+            raw: self.raw,
         }
     }
 }
@@ -728,9 +713,7 @@ impl<'a, T> Iterator for RegionIterMut<'a, T> {
         if self.cur < self.end {
             let index = self.cur;
             self.cur += 1;
-            unsafe {
-                Some(&mut *(&mut self.raw[index] as *mut _))
-            }
+            unsafe { Some(&mut *(&mut self.raw[index] as *mut _)) }
         } else {
             None
         }
@@ -753,11 +736,17 @@ pub struct DisplayIter<'a, T> {
 impl<'a, T: 'a> DisplayIter<'a, T> {
     pub fn new(grid: &'a Grid<T>) -> DisplayIter<'a, T> {
         let offset = grid.display_offset + *grid.num_lines() - 1;
-        let limit =  grid.display_offset;
+        let limit = grid.display_offset;
         let col = Column(0);
         let line = Line(0);
 
-        DisplayIter { grid, offset, col, limit, line }
+        DisplayIter {
+            grid,
+            offset,
+            col,
+            limit,
+            line,
+        }
     }
 
     pub fn offset(&self) -> usize {
@@ -787,7 +776,7 @@ impl<'a, T: Copy + 'a> Iterator for DisplayIter<'a, T> {
         let item = Some(Indexed {
             inner: self.grid.raw[self.offset][self.col],
             line: self.line,
-            column: self.col
+            column: self.col,
         });
 
         // Update line/col to point to next item

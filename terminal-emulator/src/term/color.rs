@@ -1,13 +1,21 @@
-use std::ops::{Index, IndexMut, Mul};
 use std::fmt;
+use std::ops::{Index, IndexMut, Mul};
 
 use crate::ansi;
 use crate::config;
 
 pub const COUNT: usize = 270;
 
-pub const RED: Rgb = Rgb { r: 0xff, g: 0x0, b: 0x0 };
-pub const YELLOW: Rgb = Rgb { r: 0xff, g: 0xff, b: 0x0 };
+pub const RED: Rgb = Rgb {
+    r: 0xff,
+    g: 0x0,
+    b: 0x0,
+};
+pub const YELLOW: Rgb = Rgb {
+    r: 0xff,
+    g: 0xff,
+    b: 0x0,
+};
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone, Default)]
 pub struct Rgb {
@@ -24,7 +32,7 @@ impl Mul<f32> for Rgb {
         let result = Rgb {
             r: (f32::from(self.r) * rhs).max(0.0).min(255.0) as u8,
             g: (f32::from(self.g) * rhs).max(0.0).min(255.0) as u8,
-            b: (f32::from(self.b) * rhs).max(0.0).min(255.0) as u8
+            b: (f32::from(self.b) * rhs).max(0.0).min(255.0) as u8,
         };
 
         trace!("Scaling RGB by {} from {:?} to {:?}", rhs, self, result);
@@ -60,24 +68,24 @@ impl<'a> From<&'a config::Colors> for List {
 impl List {
     pub fn fill_named(&mut self, colors: &config::Colors) {
         // Normals
-        self[ansi::NamedColor::Black]   = colors.normal.black;
-        self[ansi::NamedColor::Red]     = colors.normal.red;
-        self[ansi::NamedColor::Green]   = colors.normal.green;
-        self[ansi::NamedColor::Yellow]  = colors.normal.yellow;
-        self[ansi::NamedColor::Blue]    = colors.normal.blue;
+        self[ansi::NamedColor::Black] = colors.normal.black;
+        self[ansi::NamedColor::Red] = colors.normal.red;
+        self[ansi::NamedColor::Green] = colors.normal.green;
+        self[ansi::NamedColor::Yellow] = colors.normal.yellow;
+        self[ansi::NamedColor::Blue] = colors.normal.blue;
         self[ansi::NamedColor::Magenta] = colors.normal.magenta;
-        self[ansi::NamedColor::Cyan]    = colors.normal.cyan;
-        self[ansi::NamedColor::White]   = colors.normal.white;
+        self[ansi::NamedColor::Cyan] = colors.normal.cyan;
+        self[ansi::NamedColor::White] = colors.normal.white;
 
         // Brights
-        self[ansi::NamedColor::BrightBlack]   = colors.bright.black;
-        self[ansi::NamedColor::BrightRed]     = colors.bright.red;
-        self[ansi::NamedColor::BrightGreen]   = colors.bright.green;
-        self[ansi::NamedColor::BrightYellow]  = colors.bright.yellow;
-        self[ansi::NamedColor::BrightBlue]    = colors.bright.blue;
+        self[ansi::NamedColor::BrightBlack] = colors.bright.black;
+        self[ansi::NamedColor::BrightRed] = colors.bright.red;
+        self[ansi::NamedColor::BrightGreen] = colors.bright.green;
+        self[ansi::NamedColor::BrightYellow] = colors.bright.yellow;
+        self[ansi::NamedColor::BrightBlue] = colors.bright.blue;
         self[ansi::NamedColor::BrightMagenta] = colors.bright.magenta;
-        self[ansi::NamedColor::BrightCyan]    = colors.bright.cyan;
-        self[ansi::NamedColor::BrightWhite]   = colors.bright.white;
+        self[ansi::NamedColor::BrightCyan] = colors.bright.cyan;
+        self[ansi::NamedColor::BrightWhite] = colors.bright.white;
         self[ansi::NamedColor::BrightForeground] = colors
             .primary
             .bright_foreground
@@ -89,7 +97,7 @@ impl List {
 
         // Foreground and background for custom cursor colors
         self[ansi::NamedColor::CursorText] = colors.cursor.text.unwrap_or_else(Rgb::default);
-        self[ansi::NamedColor::Cursor]     = colors.cursor.cursor.unwrap_or_else(Rgb::default);
+        self[ansi::NamedColor::Cursor] = colors.cursor.cursor.unwrap_or_else(Rgb::default);
 
         // Dims
         self[ansi::NamedColor::DimForeground] = colors
@@ -99,25 +107,25 @@ impl List {
         match colors.dim {
             Some(ref dim) => {
                 trace!("Using config-provided dim colors");
-                self[ansi::NamedColor::DimBlack]   = dim.black;
-                self[ansi::NamedColor::DimRed]     = dim.red;
-                self[ansi::NamedColor::DimGreen]   = dim.green;
-                self[ansi::NamedColor::DimYellow]  = dim.yellow;
-                self[ansi::NamedColor::DimBlue]    = dim.blue;
+                self[ansi::NamedColor::DimBlack] = dim.black;
+                self[ansi::NamedColor::DimRed] = dim.red;
+                self[ansi::NamedColor::DimGreen] = dim.green;
+                self[ansi::NamedColor::DimYellow] = dim.yellow;
+                self[ansi::NamedColor::DimBlue] = dim.blue;
                 self[ansi::NamedColor::DimMagenta] = dim.magenta;
-                self[ansi::NamedColor::DimCyan]    = dim.cyan;
-                self[ansi::NamedColor::DimWhite]   = dim.white;
+                self[ansi::NamedColor::DimCyan] = dim.cyan;
+                self[ansi::NamedColor::DimWhite] = dim.white;
             }
             None => {
                 trace!("Deriving dim colors from normal colors");
-                self[ansi::NamedColor::DimBlack]   = colors.normal.black   * 0.66;
-                self[ansi::NamedColor::DimRed]     = colors.normal.red     * 0.66;
-                self[ansi::NamedColor::DimGreen]   = colors.normal.green   * 0.66;
-                self[ansi::NamedColor::DimYellow]  = colors.normal.yellow  * 0.66;
-                self[ansi::NamedColor::DimBlue]    = colors.normal.blue    * 0.66;
+                self[ansi::NamedColor::DimBlack] = colors.normal.black * 0.66;
+                self[ansi::NamedColor::DimRed] = colors.normal.red * 0.66;
+                self[ansi::NamedColor::DimGreen] = colors.normal.green * 0.66;
+                self[ansi::NamedColor::DimYellow] = colors.normal.yellow * 0.66;
+                self[ansi::NamedColor::DimBlue] = colors.normal.blue * 0.66;
                 self[ansi::NamedColor::DimMagenta] = colors.normal.magenta * 0.66;
-                self[ansi::NamedColor::DimCyan]    = colors.normal.cyan    * 0.66;
-                self[ansi::NamedColor::DimWhite]   = colors.normal.white   * 0.66;
+                self[ansi::NamedColor::DimCyan] = colors.normal.cyan * 0.66;
+                self[ansi::NamedColor::DimWhite] = colors.normal.white * 0.66;
             }
         }
     }
@@ -136,7 +144,8 @@ impl List {
                     {
                         self[index] = indexed_color.color;
                     } else {
-                        self[index] = Rgb { r: if r == 0 { 0 } else { r * 40 + 55 },
+                        self[index] = Rgb {
+                            r: if r == 0 { 0 } else { r * 40 + 55 },
                             b: if b == 0 { 0 } else { b * 40 + 55 },
                             g: if g == 0 { 0 } else { g * 40 + 55 },
                         };
@@ -171,7 +180,7 @@ impl List {
             self[index] = Rgb {
                 r: value,
                 g: value,
-                b: value
+                b: value,
             };
             index += 1;
         }
