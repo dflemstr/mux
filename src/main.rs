@@ -31,8 +31,12 @@ fn main() {
 }
 
 fn run() -> Result<(), failure::Error> {
+    use futures::future::Future;
     use std::fs;
+    use std::sync;
     use structopt::StructOpt;
+
+    log_panics::init();
 
     let options = options::Options::from_args();
 
@@ -64,14 +68,21 @@ fn run() -> Result<(), failure::Error> {
 
     info!("starting");
 
-    let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on_all(tokio_async_await::compat::backward::Compat::new(
-        run_with_options(options),
-    ))?;
+    let result = sync::Arc::new(sync::Mutex::new(None));
+    let result_clone = sync::Arc::clone(&result);
+    tokio::run(
+        tokio_async_await::compat::backward::Compat::new(run_with_options(options))
+            .then(move |r| futures::future::ok(*result_clone.lock().unwrap() = Some(r))),
+    );
 
     info!("done");
 
-    Ok(())
+    let mut guard = result.lock().unwrap();
+    guard.take().unwrap_or_else(|| {
+        Err(failure::err_msg(
+            "an async panic occurred (check log file for more info)",
+        ))
+    })
 }
 
 async fn run_with_options(mut options: options::Options) -> Result<(), failure::Error> {
@@ -118,6 +129,8 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
     debug!("stdin closed, discarding further input");
 
     await!(rest.into_future().map_err(|(e, _)| e))?;
+
+    debug!("end of input");
 
     Ok(())
 }

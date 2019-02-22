@@ -106,7 +106,6 @@ pub fn blocking_iter_to_stream<A>(
 where
     A: Send + fmt::Debug + 'static,
 {
-    use futures::stream::Stream;
     futures::sync::mpsc::spawn(
         futures::stream::poll_fn(move || {
             tokio_threadpool::blocking(|| {

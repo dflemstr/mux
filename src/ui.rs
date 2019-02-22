@@ -127,7 +127,11 @@ impl tui::widgets::Widget for State {
     fn draw(&mut self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
         let num_processes = self.processes.len();
 
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
         let chunks = tui::layout::Layout::default()
             .direction(tui::layout::Direction::Horizontal)
             .constraints(vec![
@@ -193,11 +197,20 @@ impl ProcessState {
 
 impl tui::widgets::Widget for ProcessState {
     fn draw(&mut self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
+        let chunks = tui::layout::Layout::default()
+            .constraints(vec![
+                tui::layout::Constraint::Percentage(100),
+                tui::layout::Constraint::Min(if self.exit_status.is_none() { 0 } else { 1 }),
+            ])
+            .split(area);
+        let main_chunk = chunks[0];
+        let status_chunk = chunks[1];
+
         let mut block = tui::widgets::Block::default()
             .title(&self.title)
             .borders(tui::widgets::Borders::ALL);
-        block.draw(area, buf);
-        let inner_area = block.inner(area);
+        block.draw(main_chunk, buf);
+        let inner_area = block.inner(main_chunk);
 
         for cell in self.terminal_emulator.renderable_cells() {
             #[allow(clippy::cast_possible_truncation)]
@@ -205,8 +218,8 @@ impl tui::widgets::Widget for ProcessState {
             #[allow(clippy::cast_possible_truncation)]
             let y = cell.line.0 as u16;
             if x < inner_area.width && y < inner_area.height {
-                let x = inner_area.x + y;
-                let y = inner_area.y + x;
+                let x = inner_area.x + x;
+                let y = inner_area.y + y;
                 let buf_cell = buf.get_mut(x, y);
                 buf_cell.set_char(cell.chars[0]);
                 buf_cell.set_bg(convert_color(cell.bg));
@@ -214,11 +227,59 @@ impl tui::widgets::Widget for ProcessState {
                 buf_cell.set_modifier(convert_flags(cell.flags));
             }
         }
+
+        if let Some(exit_status) = self.exit_status {
+            tui::widgets::Paragraph::new(
+                [tui::widgets::Text::raw(format!(
+                    "exited with {}",
+                    exit_status
+                ))]
+                .as_ref()
+                .iter(),
+            )
+            .draw(status_chunk, buf);
+        }
     }
 }
 
-fn convert_color(color: terminal_emulator::term::color::Rgb) -> tui::style::Color {
-    tui::style::Color::Rgb(color.r, color.g, color.b)
+fn convert_color(color: terminal_emulator::ansi::Color) -> tui::style::Color {
+    match color {
+        terminal_emulator::ansi::Color::Named(named) => match named {
+            terminal_emulator::ansi::NamedColor::Black => tui::style::Color::Black,
+            terminal_emulator::ansi::NamedColor::Red => tui::style::Color::Red,
+            terminal_emulator::ansi::NamedColor::Green => tui::style::Color::Green,
+            terminal_emulator::ansi::NamedColor::Yellow => tui::style::Color::Yellow,
+            terminal_emulator::ansi::NamedColor::Blue =>tui::style::Color::Blue,
+            terminal_emulator::ansi::NamedColor::Magenta => tui::style::Color::Magenta,
+            terminal_emulator::ansi::NamedColor::Cyan =>tui::style::Color::Cyan,
+            terminal_emulator::ansi::NamedColor::White => tui::style::Color::White,
+            terminal_emulator::ansi::NamedColor::BrightBlack => tui::style::Color::DarkGray,
+            terminal_emulator::ansi::NamedColor::BrightRed => tui::style::Color::LightRed,
+            terminal_emulator::ansi::NamedColor::BrightGreen => tui::style::Color::LightGreen,
+            terminal_emulator::ansi::NamedColor::BrightYellow => tui::style::Color::LightYellow,
+            terminal_emulator::ansi::NamedColor::BrightBlue => tui::style::Color::LightBlue,
+            terminal_emulator::ansi::NamedColor::BrightMagenta => tui::style::Color::LightMagenta,
+            terminal_emulator::ansi::NamedColor::BrightCyan => tui::style::Color::LightCyan,
+            terminal_emulator::ansi::NamedColor::BrightWhite => tui::style::Color::Gray,
+            terminal_emulator::ansi::NamedColor::Foreground => tui::style::Color::Gray,
+            terminal_emulator::ansi::NamedColor::Background => tui::style::Color::Black,
+            terminal_emulator::ansi::NamedColor::CursorText => tui::style::Color::Black,
+            terminal_emulator::ansi::NamedColor::Cursor => tui::style::Color::Gray,
+            terminal_emulator::ansi::NamedColor::DimBlack => tui::style::Color::Black,
+            terminal_emulator::ansi::NamedColor::DimRed => tui::style::Color::Red,
+            terminal_emulator::ansi::NamedColor::DimGreen => tui::style::Color::Green,
+            terminal_emulator::ansi::NamedColor::DimYellow => tui::style::Color::Yellow,
+            terminal_emulator::ansi::NamedColor::DimBlue =>tui::style::Color::Blue,
+            terminal_emulator::ansi::NamedColor::DimMagenta => tui::style::Color::Magenta,
+            terminal_emulator::ansi::NamedColor::DimCyan =>tui::style::Color::Cyan,
+            terminal_emulator::ansi::NamedColor::DimWhite => tui::style::Color::White,
+            terminal_emulator::ansi::NamedColor::BrightForeground => tui::style::Color::Gray,
+            terminal_emulator::ansi::NamedColor::DimForeground => tui::style::Color::DarkGray,
+        }
+        terminal_emulator::ansi::Color::Spec(color) =>
+            tui::style::Color::Rgb(color.r, color.g, color.b),
+        terminal_emulator::ansi::Color::Indexed(_) => unimplemented!(),
+    }
 }
 
 fn convert_flags(flags: terminal_emulator::term::cell::Flags) -> tui::style::Modifier {

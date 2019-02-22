@@ -323,18 +323,18 @@ impl<'a> RenderableCellsIter<'a> {
         self.mode.contains(mode::TermMode::SHOW_CURSOR) && self.grid.contains(self.cursor)
     }
 
-    fn compute_fg_rgb(&self, fg: Color, cell: &Cell) -> Rgb {
+    fn compute_fg(&self, fg: Color, cell: &Cell) -> Color {
         use self::cell::Flags;
         match fg {
-            Color::Spec(rgb) => rgb,
+            Color::Spec(rgb) => Color::Spec(rgb),
             Color::Named(ansi) => {
                 match cell.flags & Flags::DIM_BOLD {
                     // Cell is marked as dim and not bold
                     self::cell::Flags::DIM | self::cell::Flags::DIM_BOLD => {
-                        self.colors[ansi.to_dim()]
+                        Color::Named(ansi.to_dim())
                     }
                     // None of the above, keep original color.
-                    _ => self.colors[ansi],
+                    _ => Color::Named(ansi),
                 }
             }
             Color::Indexed(idx) => {
@@ -345,7 +345,7 @@ impl<'a> RenderableCellsIter<'a> {
                     _ => idx as usize,
                 };
 
-                self.colors[idx]
+                Color::Spec(self.colors[idx])
             }
         }
     }
@@ -358,11 +358,10 @@ impl<'a> RenderableCellsIter<'a> {
         }
     }
 
-    fn compute_bg_rgb(&self, bg: Color) -> Rgb {
+    fn compute_bg(&self, bg: Color) -> Color {
         match bg {
-            Color::Spec(rgb) => rgb,
-            Color::Named(ansi) => self.colors[ansi],
-            Color::Indexed(idx) => self.colors[idx],
+            Color::Indexed(idx) => Color::Spec(self.colors[idx]),
+            c => c,
         }
     }
 }
@@ -373,8 +372,8 @@ pub struct RenderableCell {
     pub line: Line,
     pub column: Column,
     pub chars: [char; cell::MAX_ZEROWIDTH_CHARS + 1],
-    pub fg: Rgb,
-    pub bg: Rgb,
+    pub fg: Color,
+    pub bg: Color,
     pub bg_alpha: f32,
     pub flags: cell::Flags,
 }
@@ -424,11 +423,11 @@ impl<'a> Iterator for RenderableCellsIter<'a> {
             };
 
             // Apply inversion and lookup RGB values
-            let mut fg_rgb = self.compute_fg_rgb(cell.fg, &cell);
-            let mut bg_rgb = self.compute_bg_rgb(cell.bg);
+            let mut fg = self.compute_fg(cell.fg, &cell);
+            let mut bg = self.compute_bg(cell.bg);
 
             let bg_alpha = if selected ^ cell.inverse() {
-                mem::swap(&mut fg_rgb, &mut bg_rgb);
+                mem::swap(&mut fg, &mut bg);
                 self.compute_bg_alpha(cell.fg)
             } else {
                 self.compute_bg_alpha(cell.bg)
@@ -439,8 +438,8 @@ impl<'a> Iterator for RenderableCellsIter<'a> {
                 column: cell.column,
                 flags: cell.flags,
                 chars: cell.chars(),
-                fg: fg_rgb,
-                bg: bg_rgb,
+                fg: fg,
+                bg: bg,
                 bg_alpha,
             });
         }
