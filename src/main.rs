@@ -103,7 +103,7 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
     debug!("created terminal");
 
     let events = read_events(tty_input);
-    let input = run_gui(
+    let input = await!(run_gui(
         process_reads,
         terminal,
         events,
@@ -111,7 +111,7 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
             .map(|args| args.specific)
             .collect::<Vec<_>>(),
         template_placeholder,
-    )?;
+    ))?;
 
     let rest = await!(forward_stdin(process_writes, input))?;
 
@@ -122,7 +122,7 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
     Ok(())
 }
 
-fn run_gui(
+async fn run_gui(
     process_reads: Vec<process::Read>,
     terminal: tui::Terminal<impl tui::backend::Backend + 'static>,
     events: impl futures::stream::Stream<Item = ui::Event, Error = failure::Error>,
@@ -131,11 +131,6 @@ fn run_gui(
 ) -> Result<impl futures::Stream<Item = bytes::BytesMut, Error = failure::Error>, failure::Error> {
     use futures::future::Future;
     use futures::stream::Stream;
-
-    let state = process_reads
-        .iter()
-        .map(|_| String::new())
-        .collect::<Vec<_>>();
 
     let (outputs, exits): (Vec<_>, Vec<_>) = process_reads
         .into_iter()
@@ -166,7 +161,9 @@ fn run_gui(
         }),
     );
 
-    ui.draw()?;
+    await!(futures::future::poll_fn(|| tokio_threadpool::blocking(
+        || ui.draw()
+    )))??;
 
     Ok(ui.into_frames())
 }

@@ -30,7 +30,7 @@ struct ProcessState {
 
 impl<B, E> Ui<B, E>
 where
-    B: tui::backend::Backend,
+    B: tui::backend::Backend + 'static,
     E: futures::stream::Stream<Item = Event, Error = failure::Error>,
 {
     pub fn new(
@@ -55,29 +55,47 @@ where
         self,
     ) -> impl futures::stream::Stream<Item = bytes::BytesMut, Error = failure::Error> {
         use futures::stream::Stream;
+        use std::sync;
 
-        let mut state = self.state;
-        let mut terminal = self.terminal;
+        let state = sync::Arc::new(sync::Mutex::new(self.state));
+        let terminal = sync::Arc::new(sync::Mutex::new(self.terminal));
 
         self.events
             .and_then(move |event| {
-                let data = match event {
-                    Event::Output(idx, data) => {
-                        state.on_data(idx, data.freeze())?;
-                        None
+                use futures::future::Future;
+
+                let data = {
+                    let mut state_guard = state.lock().unwrap();
+                    match event {
+                        Event::Output(idx, data) => {
+                            state_guard.on_data(idx, data.freeze());
+                            None
+                        }
+                        Event::Exit(idx, status) => {
+                            state_guard.on_exit(idx, status);
+                            None
+                        }
+                        Event::Input(_, data) => Some(data),
                     }
-                    Event::Exit(idx, status) => {
-                        state.on_exit(idx, status)?;
-                        None
-                    }
-                    Event::Input(_, data) => Some(data),
                 };
 
-                terminal.draw(|mut f| {
-                    f.render(&mut state, f.size());
-                })?;
+                let state = sync::Arc::clone(&state);
+                let terminal = sync::Arc::clone(&terminal);
 
-                Ok(data)
+                futures::future::poll_fn(move || {
+                    let state = sync::Arc::clone(&state);
+                    let terminal = sync::Arc::clone(&terminal);
+
+                    tokio_threadpool::blocking(move || {
+                        let mut terminal_guard = terminal.lock().unwrap();
+                        terminal_guard.draw(move |mut f| {
+                            let mut state_guard = state.lock().unwrap();
+                            f.render(&mut *state_guard, f.size());
+                        })
+                    })
+                })
+                .map_err(failure::Error::from)
+                .and_then(|_| Ok(data))
             })
             .filter_map(|data| data)
     }
@@ -96,15 +114,11 @@ impl State {
         Self { processes }
     }
 
-    fn on_data(&mut self, index: usize, data: bytes::Bytes) -> Result<(), failure::Error> {
+    fn on_data(&mut self, index: usize, data: bytes::Bytes) {
         self.processes[index].on_data(data)
     }
 
-    fn on_exit(
-        &mut self,
-        index: usize,
-        status: std::process::ExitStatus,
-    ) -> Result<(), failure::Error> {
+    fn on_exit(&mut self, index: usize, status: std::process::ExitStatus) {
         self.processes[index].on_exit(status)
     }
 }
@@ -113,6 +127,7 @@ impl tui::widgets::Widget for State {
     fn draw(&mut self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
         let num_processes = self.processes.len();
 
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
         let chunks = tui::layout::Layout::default()
             .direction(tui::layout::Direction::Horizontal)
             .constraints(vec![
@@ -159,7 +174,7 @@ impl ProcessState {
         }
     }
 
-    fn on_data(&mut self, data: bytes::Bytes) -> Result<(), failure::Error> {
+    fn on_data(&mut self, data: bytes::Bytes) {
         for byte in data {
             // TODO: maybe do something smarter than passing sink() here
             self.processor
@@ -169,12 +184,10 @@ impl ProcessState {
         if let Some(title) = self.terminal_emulator.get_next_title() {
             self.title = title;
         }
-        Ok(())
     }
 
-    fn on_exit(&mut self, status: std::process::ExitStatus) -> Result<(), failure::Error> {
+    fn on_exit(&mut self, status: std::process::ExitStatus) {
         self.exit_status = Some(status);
-        Ok(())
     }
 }
 
@@ -187,7 +200,9 @@ impl tui::widgets::Widget for ProcessState {
         let inner_area = block.inner(area);
 
         for cell in self.terminal_emulator.renderable_cells() {
+            #[allow(clippy::cast_possible_truncation)]
             let x = cell.column.0 as u16;
+            #[allow(clippy::cast_possible_truncation)]
             let y = cell.line.0 as u16;
             if x < inner_area.width && y < inner_area.height {
                 let x = inner_area.x + y;

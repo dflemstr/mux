@@ -30,8 +30,8 @@ impl<S: futures::stream::Stream> SelectAll<S> {
     ///
     /// The returned `SelectAll` does not contain any streams and, in this
     /// state, `SelectAll::poll` will return `Ok(Async::Ready(None))`.
-    pub fn new() -> SelectAll<S> {
-        SelectAll {
+    pub fn new() -> Self {
+        Self {
             inner: futures::stream::FuturesUnordered::new(),
         }
     }
@@ -39,11 +39,13 @@ impl<S: futures::stream::Stream> SelectAll<S> {
     /// Returns the number of streams contained in the set.
     ///
     /// This represents the total number of in-flight streams.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
     /// Returns `true` if the set contains no streams
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
