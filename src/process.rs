@@ -151,6 +151,7 @@ impl futures::sink::Sink for Input {
                 }
             })
         } else {
+            debug!("closing process stdin sink");
             Ok(futures::Async::Ready(()))
         }
     }
@@ -171,15 +172,17 @@ impl futures::stream::Stream for Output {
     fn poll(&mut self) -> Result<futures::Async<Option<Self::Item>>, Self::Error> {
         if let Some(ref mut stream) = self.stream {
             stream.poll().or_else(|error| {
-                debug!("error in process output poll: {}", error);
                 if error.raw_os_error() == Some(5) {
                     self.stream = None;
+                    debug!("suppressed EIO");
                     Ok(futures::Async::Ready(None))
                 } else {
+                    debug!("error in process output poll: {}", error);
                     Err(failure::Error::from(error))
                 }
             })
         } else {
+            debug!("closing process stdout stream");
             Ok(futures::Async::Ready(None))
         }
     }
@@ -190,6 +193,14 @@ impl futures::future::Future for Exit {
     type Error = failure::Error;
 
     fn poll(&mut self) -> Result<futures::Async<Self::Item>, Self::Error> {
-        self.future.poll_exit().map_err(failure::Error::from)
+        self.future
+            .poll_exit()
+            .map_err(failure::Error::from)
+            .map(|e| {
+                if let futures::Async::Ready(e) = e {
+                    debug!("process exited with {}", e)
+                };
+                e
+            })
     }
 }

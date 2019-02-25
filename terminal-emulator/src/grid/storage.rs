@@ -1,6 +1,6 @@
 /// Wrapper around Vec which supports fast indexing and rotation
 ///
-/// The rotation implemented by grid::Storage is a simple integer addition.
+/// The rotation implemented by `grid::Storage` is a simple integer addition.
 /// Compare with standard library rotation which requires rearranging items in
 /// memory.
 ///
@@ -80,14 +80,14 @@ impl<T: PartialEq> ::std::cmp::PartialEq for Storage<T> {
 
 impl<T> Storage<T> {
     #[inline]
-    pub fn with_capacity(lines: Line, template: Row<T>) -> Storage<T>
+    pub fn with_capacity(lines: Line, template: Row<T>) -> Self
     where
         T: Clone,
     {
         // Initialize visible lines, the scrollback buffer is initialized dynamically
         let inner = vec![template; lines.0];
 
-        Storage {
+        Self {
             inner,
             zero: 0,
             visible_lines: lines - 1,
@@ -262,6 +262,7 @@ impl<T> Storage<T> {
         self.inner.iter_mut()
     }
 
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
     pub fn rotate(&mut self, count: isize) {
         debug_assert!(count.abs() as usize <= self.inner.len());
 

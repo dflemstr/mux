@@ -18,9 +18,15 @@ use std::ops::Range;
 use std::str;
 
 use crate::index::{Column, Contains, Line};
-use crate::term::color::Rgb;
 use base64;
 use vte;
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Default)]
+pub struct Rgb {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
 
 // Parse color arguments
 //
@@ -1110,14 +1116,14 @@ where
                 if private {
                     unhandled!();
                 }
-                let arg0 = arg_or_default!(idx: 0, default: 1) as usize;
-                let top = Line(arg0 - 1);
+                let arg_0 = arg_or_default!(idx: 0, default: 1) as usize;
+                let top = Line(arg_0 - 1);
                 // Bottom should be included in the range, but range end is not
                 // usually included.  One option would be to use an inclusive
                 // range, but instead we just let the open range end be 1
                 // higher.
-                let arg1 = arg_or_default!(idx: 1, default: handler.lines().0 as _) as usize;
-                let bottom = Line(arg1);
+                let arg_1 = arg_or_default!(idx: 1, default: handler.lines().0 as _) as usize;
+                let bottom = Line(arg_1);
 
                 handler.set_scrolling_region(top..bottom);
             }
@@ -1396,11 +1402,10 @@ pub mod C1 {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_number, parse_rgb_color, Attr, CharsetIndex, Color, Handler, Processor,
+        parse_number, parse_rgb_color, Attr, CharsetIndex, Color, Handler, Processor, Rgb,
         StandardCharset, TermInfo,
     };
     use crate::index::{Column, Line};
-    use crate::term::color::Rgb;
     use std::io;
 
     /// The /dev/null of `io::Write`

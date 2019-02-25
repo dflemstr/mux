@@ -178,7 +178,7 @@ async fn run_gui(
         || ui.draw()
     )))??;
 
-    Ok(ui.into_frames())
+    Ok(ui.into_frames()?)
 }
 
 fn read_events(

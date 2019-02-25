@@ -5,7 +5,7 @@ authors = ["David Flemström <david.flemstrom@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-tui = "0.4.0"
+tui = { git = "https://github.com/dflemstr/tui-rs.git", branch = "more-styles-and-colors" }
 vte = "0.3.3"
 structopt = "0.2.14"
 tokio = { version = "0.1.15", features = ["async-await-preview"] }
@@ -28,6 +28,7 @@ log-panics = "2.0.0"
 [profile.release]
 lto = true
 codegen-units = 1
+debug = true
 
 [workspace]
 members = ["terminal-emulator"]

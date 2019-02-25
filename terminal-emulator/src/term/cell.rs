@@ -36,10 +36,6 @@ bitflags! {
     }
 }
 
-const fn default_extra() -> [char; MAX_ZEROWIDTH_CHARS] {
-    [' '; MAX_ZEROWIDTH_CHARS]
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Cell {
     pub c: char,

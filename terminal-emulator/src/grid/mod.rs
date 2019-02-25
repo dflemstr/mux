@@ -15,9 +15,10 @@
 //! A specialized 2d grid implementation optimized for use in a terminal.
 
 use std::cmp::{max, min, Ordering};
+use std::iter;
 use std::ops::{Deref, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo};
 
-use crate::index::{self, Column, IndexRange, Line, Point};
+use crate::index;
 use crate::selection::Selection;
 
 mod row;
@@ -32,15 +33,15 @@ use self::storage::Storage;
 const MIN_INIT_SIZE: usize = 1_000;
 
 /// Bidirection iterator
-pub trait BidirectionalIterator: Iterator {
+pub trait BidirectionalIterator: iter::Iterator {
     fn prev(&mut self) -> Option<Self::Item>;
 }
 
 /// An item in the grid along with its Line and Column.
 pub struct Indexed<T> {
     pub inner: T,
-    pub line: Line,
-    pub column: Column,
+    pub line: index::Line,
+    pub column: index::Column,
 }
 
 impl<T> Deref for Indexed<T> {
@@ -52,20 +53,8 @@ impl<T> Deref for Indexed<T> {
     }
 }
 
-impl<T: PartialEq> ::std::cmp::PartialEq for Grid<T> {
-    fn eq(&self, other: &Self) -> bool {
-        // Compare struct fields and check result of grid comparison
-        self.raw.eq(&other.raw)
-            && self.cols.eq(&other.cols)
-            && self.lines.eq(&other.lines)
-            && self.display_offset.eq(&other.display_offset)
-            && self.scroll_limit.eq(&other.scroll_limit)
-            && self.selection.eq(&other.selection)
-    }
-}
-
 /// Represents the terminal display contents
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Grid<T> {
     /// Lines in the grid. Each row holds a list of cells corresponding to the
     /// columns in that row.
@@ -95,12 +84,12 @@ pub struct Grid<T> {
     max_scroll_limit: usize,
 }
 
-pub struct GridIterator<'a, T> {
+pub struct Iterator<'a, T> {
     /// Immutable grid reference
     grid: &'a Grid<T>,
 
     /// Current position of the iterator within the grid.
-    pub cur: Point<usize>,
+    pub cur: index::Point<usize>,
 }
 
 #[derive(Copy, Clone)]
@@ -114,15 +103,15 @@ pub enum Scroll {
 
 #[derive(Copy, Clone)]
 pub enum ViewportPosition {
-    Visible(Line),
+    Visible(index::Line),
     Above,
     Below,
 }
 
 impl<T: Copy + Clone> Grid<T> {
-    pub fn new(lines: index::Line, cols: index::Column, scrollback: usize, template: T) -> Grid<T> {
+    pub fn new(lines: index::Line, cols: index::Column, scrollback: usize, template: T) -> Self {
         let raw = Storage::with_capacity(lines, Row::new(cols, &template));
-        Grid {
+        Self {
             raw,
             cols,
             lines,
@@ -133,8 +122,8 @@ impl<T: Copy + Clone> Grid<T> {
         }
     }
 
-    pub fn visible_to_buffer(&self, point: Point) -> Point<usize> {
-        Point {
+    pub fn visible_to_buffer(&self, point: index::Point) -> index::Point<usize> {
+        index::Point {
             line: self.visible_line_to_buffer(point.line),
             col: point.col,
         }
@@ -151,7 +140,7 @@ impl<T: Copy + Clone> Grid<T> {
         }
     }
 
-    pub fn visible_line_to_buffer(&self, line: Line) -> usize {
+    pub fn visible_line_to_buffer(&self, line: index::Line) -> usize {
         self.line_to_offset(line) + self.display_offset
     }
 
@@ -166,7 +155,7 @@ impl<T: Copy + Clone> Grid<T> {
         match scroll {
             Scroll::Lines(count) => {
                 self.display_offset = min(
-                    max((self.display_offset as isize) + count, 0isize) as usize,
+                    max((self.display_offset as isize) + count, 0_isize) as usize,
                     self.scroll_limit,
                 );
             }
@@ -234,7 +223,7 @@ impl<T: Copy + Clone> Grid<T> {
         // Move existing lines up if there is no scrollback to fill new lines
         if lines_added.0 > self.scroll_limit {
             let scroll_lines = lines_added - self.scroll_limit;
-            self.scroll_up(&(Line(0)..new_line_count), scroll_lines, template);
+            self.scroll_up(&(index::Line(0)..new_line_count), scroll_lines, template);
         }
 
         self.scroll_limit = self.scroll_limit.saturating_sub(*lines_added);
@@ -296,7 +285,7 @@ impl<T: Copy + Clone> Grid<T> {
         // changing the start index.
         //
         // To accomodate scroll regions, rows are reordered at the end.
-        if region.start == Line(0) {
+        if region.start == index::Line(0) {
             // Rotate the entire line buffer. If there's a scrolling region
             // active, the bottom lines are restored in the next step.
             self.raw.rotate_up(*positions);
@@ -308,21 +297,21 @@ impl<T: Copy + Clone> Grid<T> {
 
             // Now, restore any scroll region lines
             let lines = self.lines;
-            for i in IndexRange(region.end..lines) {
+            for i in index::Range(region.end..lines) {
                 self.raw.swap_lines(i, i + positions);
             }
 
             // Finally, reset recycled lines
-            for i in IndexRange(Line(0)..positions) {
+            for i in index::Range(index::Line(0)..positions) {
                 self.raw[i].reset(&template);
             }
         } else {
             // Subregion rotation
-            for line in IndexRange((region.start + positions)..region.end).rev() {
+            for line in index::Range((region.start + positions)..region.end).rev() {
                 self.raw.swap_lines(line, line - positions);
             }
 
-            for line in IndexRange(region.start..(region.start + positions)) {
+            for line in index::Range(region.start..(region.start + positions)) {
                 self.raw[line].reset(&template);
             }
         }
@@ -332,7 +321,7 @@ impl<T: Copy + Clone> Grid<T> {
     ///
     /// This is the performance-sensitive part of scrolling.
     pub fn scroll_up(&mut self, region: &Range<index::Line>, positions: index::Line, template: &T) {
-        if region.start == Line(0) {
+        if region.start == index::Line(0) {
             // Update display offset when not pinned to active area
             if self.display_offset != 0 {
                 self.display_offset = min(
@@ -368,12 +357,12 @@ impl<T: Copy + Clone> Grid<T> {
             }
         } else {
             // Subregion rotation
-            for line in IndexRange(region.start..(region.end - positions)) {
+            for line in index::Range(region.start..(region.end - positions)) {
                 self.raw.swap_lines(line, line + positions);
             }
 
             // Clear reused lines
-            for line in IndexRange((region.end - positions)..region.end) {
+            for line in index::Range((region.end - positions)..region.end) {
                 self.raw[line].reset(&template);
             }
         }
@@ -433,15 +422,15 @@ impl<T> Grid<T> {
         self.raw.truncate();
     }
 
-    pub fn iter_from(&self, point: Point<usize>) -> GridIterator<'_, T> {
-        GridIterator {
+    pub fn iter_from(&self, point: index::Point<usize>) -> Iterator<'_, T> {
+        Iterator {
             grid: self,
             cur: point,
         }
     }
 
     #[inline]
-    pub fn contains(&self, point: &Point) -> bool {
+    pub fn contains(&self, point: &index::Point) -> bool {
         self.lines > point.line && self.cols > point.col
     }
 
@@ -451,42 +440,45 @@ impl<T> Grid<T> {
     }
 }
 
-impl<'a, T> Iterator for GridIterator<'a, T> {
+impl<'a, T> iter::Iterator for Iterator<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let last_col = self.grid.num_cols() - Column(1);
+        let last_col = self.grid.num_cols() - index::Column(1);
         match self.cur {
-            Point { line, col } if line == 0 && col == last_col => None,
-            Point { col, .. } if (col == last_col) => {
+            index::Point { line, col } if line == 0 && col == last_col => None,
+            index::Point { col, .. } if (col == last_col) => {
                 self.cur.line -= 1;
-                self.cur.col = Column(0);
+                self.cur.col = index::Column(0);
                 Some(&self.grid[self.cur.line][self.cur.col])
             }
             _ => {
-                self.cur.col += Column(1);
+                self.cur.col += index::Column(1);
                 Some(&self.grid[self.cur.line][self.cur.col])
             }
         }
     }
 }
 
-impl<'a, T> BidirectionalIterator for GridIterator<'a, T> {
+impl<'a, T> BidirectionalIterator for Iterator<'a, T> {
     fn prev(&mut self) -> Option<Self::Item> {
         let num_cols = self.grid.num_cols();
 
         match self.cur {
-            Point {
+            index::Point {
                 line,
-                col: Column(0),
+                col: index::Column(0),
             } if line == self.grid.len() - 1 => None,
-            Point { col: Column(0), .. } => {
+            index::Point {
+                col: index::Column(0),
+                ..
+            } => {
                 self.cur.line += 1;
-                self.cur.col = num_cols - Column(1);
+                self.cur.col = num_cols - index::Column(1);
                 Some(&self.grid[self.cur.line][self.cur.col])
             }
             _ => {
-                self.cur.col -= Column(1);
+                self.cur.col -= index::Column(1);
                 Some(&self.grid[self.cur.line][self.cur.col])
             }
         }
@@ -520,18 +512,18 @@ impl<T> IndexMut<index::Line> for Grid<T> {
     }
 }
 
-impl<'point, T> Index<&'point Point> for Grid<T> {
+impl<'point, T> Index<&'point index::Point> for Grid<T> {
     type Output = T;
 
     #[inline]
-    fn index<'a>(&'a self, point: &Point) -> &'a T {
+    fn index<'a>(&'a self, point: &index::Point) -> &'a T {
         &self[point.line][point.col]
     }
 }
 
-impl<'point, T> IndexMut<&'point Point> for Grid<T> {
+impl<'point, T> IndexMut<&'point index::Point> for Grid<T> {
     #[inline]
-    fn index_mut<'a, 'b>(&'a mut self, point: &'b Point) -> &'a mut T {
+    fn index_mut<'a, 'b>(&'a mut self, point: &'b index::Point) -> &'a mut T {
         &mut self[point.line][point.col]
     }
 }
@@ -542,19 +534,19 @@ impl<'point, T> IndexMut<&'point Point> for Grid<T> {
 
 /// A subset of lines in the grid
 ///
-/// May be constructed using Grid::region(..)
+/// May be constructed using `Grid::region(..)`
 pub struct Region<'a, T> {
-    start: Line,
-    end: Line,
+    start: index::Line,
+    end: index::Line,
     raw: &'a Storage<T>,
 }
 
 /// A mutable subset of lines in the grid
 ///
-/// May be constructed using Grid::region_mut(..)
+/// May be constructed using `Grid::region_mut(..)`
 pub struct RegionMut<'a, T> {
-    start: Line,
-    end: Line,
+    start: index::Line,
+    end: index::Line,
     raw: &'a mut Storage<T>,
 }
 
@@ -577,8 +569,8 @@ pub trait IndexRegion<I, T> {
     fn region_mut(&mut self, _: I) -> RegionMut<'_, T>;
 }
 
-impl<T> IndexRegion<Range<Line>, T> for Grid<T> {
-    fn region(&self, index: Range<Line>) -> Region<'_, T> {
+impl<T> IndexRegion<Range<index::Line>, T> for Grid<T> {
+    fn region(&self, index: Range<index::Line>) -> Region<'_, T> {
         assert!(index.start < self.num_lines());
         assert!(index.end <= self.num_lines());
         assert!(index.start <= index.end);
@@ -588,7 +580,7 @@ impl<T> IndexRegion<Range<Line>, T> for Grid<T> {
             raw: &self.raw,
         }
     }
-    fn region_mut(&mut self, index: Range<Line>) -> RegionMut<'_, T> {
+    fn region_mut(&mut self, index: Range<index::Line>) -> RegionMut<'_, T> {
         assert!(index.start < self.num_lines());
         assert!(index.end <= self.num_lines());
         assert!(index.start <= index.end);
@@ -600,27 +592,27 @@ impl<T> IndexRegion<Range<Line>, T> for Grid<T> {
     }
 }
 
-impl<T> IndexRegion<RangeTo<Line>, T> for Grid<T> {
-    fn region(&self, index: RangeTo<Line>) -> Region<'_, T> {
+impl<T> IndexRegion<RangeTo<index::Line>, T> for Grid<T> {
+    fn region(&self, index: RangeTo<index::Line>) -> Region<'_, T> {
         assert!(index.end <= self.num_lines());
         Region {
-            start: Line(0),
+            start: index::Line(0),
             end: index.end,
             raw: &self.raw,
         }
     }
-    fn region_mut(&mut self, index: RangeTo<Line>) -> RegionMut<'_, T> {
+    fn region_mut(&mut self, index: RangeTo<index::Line>) -> RegionMut<'_, T> {
         assert!(index.end <= self.num_lines());
         RegionMut {
-            start: Line(0),
+            start: index::Line(0),
             end: index.end,
             raw: &mut self.raw,
         }
     }
 }
 
-impl<T> IndexRegion<RangeFrom<Line>, T> for Grid<T> {
-    fn region(&self, index: RangeFrom<Line>) -> Region<'_, T> {
+impl<T> IndexRegion<RangeFrom<index::Line>, T> for Grid<T> {
+    fn region(&self, index: RangeFrom<index::Line>) -> Region<'_, T> {
         assert!(index.start < self.num_lines());
         Region {
             start: index.start,
@@ -628,7 +620,7 @@ impl<T> IndexRegion<RangeFrom<Line>, T> for Grid<T> {
             raw: &self.raw,
         }
     }
-    fn region_mut(&mut self, index: RangeFrom<Line>) -> RegionMut<'_, T> {
+    fn region_mut(&mut self, index: RangeFrom<index::Line>) -> RegionMut<'_, T> {
         assert!(index.start < self.num_lines());
         RegionMut {
             start: index.start,
@@ -641,7 +633,7 @@ impl<T> IndexRegion<RangeFrom<Line>, T> for Grid<T> {
 impl<T> IndexRegion<RangeFull, T> for Grid<T> {
     fn region(&self, _: RangeFull) -> Region<'_, T> {
         Region {
-            start: Line(0),
+            start: index::Line(0),
             end: self.num_lines(),
             raw: &self.raw,
         }
@@ -649,7 +641,7 @@ impl<T> IndexRegion<RangeFull, T> for Grid<T> {
 
     fn region_mut(&mut self, _: RangeFull) -> RegionMut<'_, T> {
         RegionMut {
-            start: Line(0),
+            start: index::Line(0),
             end: self.num_lines(),
             raw: &mut self.raw,
         }
@@ -657,14 +649,14 @@ impl<T> IndexRegion<RangeFull, T> for Grid<T> {
 }
 
 pub struct RegionIter<'a, T> {
-    end: Line,
-    cur: Line,
+    end: index::Line,
+    cur: index::Line,
     raw: &'a Storage<T>,
 }
 
 pub struct RegionIterMut<'a, T> {
-    end: Line,
-    cur: Line,
+    end: index::Line,
+    cur: index::Line,
     raw: &'a mut Storage<T>,
 }
 
@@ -694,7 +686,7 @@ impl<'a, T> IntoIterator for RegionMut<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for RegionIter<'a, T> {
+impl<'a, T> iter::Iterator for RegionIter<'a, T> {
     type Item = &'a Row<T>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.cur < self.end {
@@ -707,7 +699,7 @@ impl<'a, T> Iterator for RegionIter<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for RegionIterMut<'a, T> {
+impl<'a, T> iter::Iterator for RegionIterMut<'a, T> {
     type Item = &'a mut Row<T>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.cur < self.end {
@@ -729,16 +721,16 @@ pub struct DisplayIter<'a, T> {
     grid: &'a Grid<T>,
     offset: usize,
     limit: usize,
-    col: Column,
-    line: Line,
+    col: index::Column,
+    line: index::Line,
 }
 
 impl<'a, T: 'a> DisplayIter<'a, T> {
     pub fn new(grid: &'a Grid<T>) -> DisplayIter<'a, T> {
         let offset = grid.display_offset + *grid.num_lines() - 1;
         let limit = grid.display_offset;
-        let col = Column(0);
-        let line = Line(0);
+        let col = index::Column(0);
+        let line = index::Line(0);
 
         DisplayIter {
             grid,
@@ -753,16 +745,16 @@ impl<'a, T: 'a> DisplayIter<'a, T> {
         self.offset
     }
 
-    pub fn column(&self) -> Column {
+    pub fn column(&self) -> index::Column {
         self.col
     }
 
-    pub fn line(&self) -> Line {
+    pub fn line(&self) -> index::Line {
         self.line
     }
 }
 
-impl<'a, T: Copy + 'a> Iterator for DisplayIter<'a, T> {
+impl<'a, T: Copy + 'a> iter::Iterator for DisplayIter<'a, T> {
     type Item = Indexed<T>;
 
     #[inline]
@@ -784,8 +776,8 @@ impl<'a, T: Copy + 'a> Iterator for DisplayIter<'a, T> {
         if self.col == self.grid.num_cols() && self.offset != self.limit {
             self.offset -= 1;
 
-            self.col = Column(0);
-            self.line = Line(*self.grid.lines - 1 - (self.offset - self.limit));
+            self.col = index::Column(0);
+            self.line = index::Line(*self.grid.lines - 1 - (self.offset - self.limit));
         }
 
         item

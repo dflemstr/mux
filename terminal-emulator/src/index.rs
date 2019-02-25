@@ -17,7 +17,7 @@
 /// Indexing types and implementations for Grid and Line
 use std::cmp::{Ord, Ordering};
 use std::fmt;
-use std::ops::{self, Add, Deref, Range};
+use std::ops::{self, Add};
 
 /// The side of a cell
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -151,7 +151,7 @@ macro_rules! forward_ref_binop {
 /// Macro for deriving deref
 macro_rules! deref {
     ($ty:ty, $target:ty) => {
-        impl Deref for $ty {
+        impl ops::Deref for $ty {
             type Target = $target;
 
             #[inline]
@@ -219,11 +219,11 @@ macro_rules! sub {
 /// and the existing impl needs the unstable Step trait
 /// This should be removed and replaced with a Step impl
 /// in the ops macro when `step_by` is stabilized
-pub struct IndexRange<T>(pub Range<T>);
+pub struct Range<T>(pub ops::Range<T>);
 
-impl<T> From<Range<T>> for IndexRange<T> {
-    fn from(from: Range<T>) -> Self {
-        IndexRange(from)
+impl<T> From<ops::Range<T>> for Range<T> {
+    fn from(from: ops::Range<T>) -> Self {
+        Range(from)
     }
 }
 
@@ -314,7 +314,7 @@ pub trait Contains {
     fn contains_(&self, item: Self::Content) -> bool;
 }
 
-impl<T: PartialOrd<T>> Contains for Range<T> {
+impl<T: PartialOrd<T>> Contains for ops::Range<T> {
     type Content = T;
     fn contains_(&self, item: Self::Content) -> bool {
         (self.start <= item) && (item < self.end)
@@ -363,7 +363,7 @@ macro_rules! ops {
             }
         }
 
-        impl Iterator for IndexRange<$ty> {
+        impl Iterator for Range<$ty> {
             type Item = $ty;
             #[inline]
             fn next(&mut self) -> Option<$ty> {
@@ -386,7 +386,7 @@ macro_rules! ops {
 
         inclusive!($ty, <$ty>::steps_between_by_one);
 
-        impl DoubleEndedIterator for IndexRange<$ty> {
+        impl DoubleEndedIterator for Range<$ty> {
             #[inline]
             fn next_back(&mut self) -> Option<$ty> {
                 if self.0.start < self.0.end {

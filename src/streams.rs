@@ -72,7 +72,8 @@ impl<S: futures::stream::Stream> futures::stream::Stream for SelectAll<S> {
                 self.push(remaining);
                 Ok(futures::Async::Ready(Some(item)))
             }
-            futures::Async::Ready(_) => Ok(futures::Async::Ready(None)),
+            futures::Async::Ready(Some((None, _))) => Ok(futures::Async::NotReady),
+            futures::Async::Ready(None) => Ok(futures::Async::Ready(None)),
         }
     }
 }
@@ -107,14 +108,7 @@ where
     A: Send + fmt::Debug + 'static,
 {
     futures::sync::mpsc::spawn(
-        futures::stream::poll_fn(move || {
-            tokio_threadpool::blocking(|| {
-                debug!("awaiting next element");
-                let item = iter.next();
-                debug!("read next element: {:?}", item);
-                item
-            })
-        }),
+        futures::stream::poll_fn(move || tokio_threadpool::blocking(|| iter.next())),
         &tokio::executor::DefaultExecutor::current(),
         0,
     )

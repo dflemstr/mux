@@ -44,8 +44,8 @@ impl<T: PartialEq> PartialEq for Row<T> {
 }
 
 impl<T: Copy + Clone> Row<T> {
-    pub fn new(columns: Column, template: &T) -> Row<T> {
-        Row {
+    pub fn new(columns: Column, template: &T) -> Self {
+        Self {
             inner: vec![*template; *columns],
             occ: 0,
         }
