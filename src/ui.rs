@@ -11,11 +11,28 @@ where
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Event {
-    Input(termion::event::Event, bytes::BytesMut),
-    Output(usize, bytes::BytesMut),
-    Exit(usize, std::process::ExitStatus),
-    EndOfInput,
+    UserInput(termion::event::Event, bytes::BytesMut),
+    EndOfUserInput,
+    ProcessOutput(usize, bytes::BytesMut),
+    ProcessExit(usize, std::process::ExitStatus),
     Tick,
+}
+
+#[derive(Clone, Debug)]
+pub enum Data {
+    ProcessInput {
+        index: usize,
+        data: bytes::Bytes,
+    },
+    ProcessInputAll {
+        data: bytes::Bytes,
+    },
+    #[allow(dead_code)]
+    ProcessTermResize {
+        index: usize,
+        width: u16,
+        height: u16,
+    },
 }
 
 pub struct ProcessSettings {
@@ -31,6 +48,7 @@ struct ProcessState {
     processor: terminal_emulator::Processor,
     title: String,
     exit_status: Option<std::process::ExitStatus>,
+    input: Vec<u8>,
 }
 
 impl<B, E> Ui<B, E>
@@ -58,10 +76,8 @@ where
 
     pub fn into_frames(
         self,
-    ) -> Result<
-        impl futures::stream::Stream<Item = bytes::BytesMut, Error = failure::Error>,
-        failure::Error,
-    > {
+    ) -> Result<impl futures::stream::Stream<Item = Data, Error = failure::Error>, failure::Error>
+    {
         use futures::stream::Stream;
         use std::sync;
 
@@ -88,31 +104,38 @@ where
 
         let frames = self
             .events
-            .chain(futures::stream::once(Ok(Event::EndOfInput)))
+            .chain(futures::stream::once(Ok(Event::EndOfUserInput)))
             .select(resizes)
-            .take_while(|e| futures::future::ok(*e != Event::EndOfInput))
+            .take_while(|e| futures::future::ok(*e != Event::EndOfUserInput))
             .and_then(move |event| {
                 use futures::future::Future;
 
-                let data = {
+                let state = sync::Arc::clone(&state);
+                let terminal = sync::Arc::clone(&terminal);
+
+                let process_input_all = {
                     let mut state_guard = state.lock().unwrap();
                     match event {
-                        Event::Output(idx, data) => {
+                        Event::ProcessOutput(idx, data) => {
                             state_guard.on_data(idx, data.freeze());
                             None
                         }
-                        Event::Exit(idx, status) => {
+                        Event::ProcessExit(idx, status) => {
                             state_guard.on_exit(idx, status);
                             None
                         }
-                        Event::Input(_, data) => Some(data),
-                        Event::EndOfInput => None,
+                        Event::UserInput(_, data) => Some(data.freeze()),
+                        Event::EndOfUserInput => None,
                         Event::Tick => None,
                     }
                 };
 
-                let state = sync::Arc::clone(&state);
-                let terminal = sync::Arc::clone(&terminal);
+                let process_inputs = state
+                    .lock()
+                    .unwrap()
+                    .take_process_inputs()
+                    .map(|(i, d)| (i, d.freeze()))
+                    .collect::<Vec<_>>();
 
                 futures::future::poll_fn(move || {
                     let state = sync::Arc::clone(&state);
@@ -128,9 +151,20 @@ where
                     })
                 })
                 .map_err(failure::Error::from)
-                .and_then(|_| Ok(data))
+                .map(|_| {
+                    futures::stream::iter_ok(
+                        process_input_all
+                            .into_iter()
+                            .map(|data| Data::ProcessInputAll { data })
+                            .chain(
+                                process_inputs
+                                    .into_iter()
+                                    .map(|(index, data)| Data::ProcessInput { index, data }),
+                            ),
+                    )
+                })
             })
-            .filter_map(|data| data);
+            .flatten();
 
         Ok(frames)
     }
@@ -141,6 +175,16 @@ where
             f.render(state, f.size());
         })?;
         Ok(())
+    }
+}
+
+impl Data {
+    pub fn matches_index(&self, other_index: usize) -> bool {
+        match *self {
+            Data::ProcessInput { index, .. } => index == other_index,
+            Data::ProcessInputAll { .. } => true,
+            Data::ProcessTermResize { index, .. } => index == other_index,
+        }
     }
 }
 
@@ -156,6 +200,15 @@ impl State {
     fn on_exit(&mut self, index: usize, status: std::process::ExitStatus) {
         self.processes[index].on_exit(status)
     }
+
+    fn take_process_inputs<'a>(
+        &'a mut self,
+    ) -> impl Iterator<Item = (usize, bytes::BytesMut)> + 'a {
+        self.processes
+            .iter_mut()
+            .enumerate()
+            .flat_map(|(idx, process)| process.take_process_input().map(|d| (idx, d)))
+    }
 }
 
 impl tui::widgets::Widget for State {
@@ -170,9 +223,7 @@ impl tui::widgets::Widget for State {
         let chunks = tui::layout::Layout::default()
             .direction(tui::layout::Direction::Horizontal)
             .constraints(vec![
-                tui::layout::Constraint::Percentage(
-                    (100 / num_processes) as u16
-                );
+                tui::layout::Constraint::Ratio(1, num_processes as u32);
                 num_processes
             ])
             .split(area);
@@ -199,6 +250,7 @@ impl ProcessState {
             });
         let processor = terminal_emulator::Processor::new();
         let exit_status = None;
+        let input = Vec::new();
 
         terminal_emulator.set_title(&settings.initial_title);
         let title = settings.initial_title;
@@ -208,6 +260,7 @@ impl ProcessState {
             processor,
             title,
             exit_status,
+            input,
         }
     }
 
@@ -215,7 +268,7 @@ impl ProcessState {
         for byte in data {
             // TODO: maybe do something smarter than passing sink() here
             self.processor
-                .advance(&mut self.terminal_emulator, byte, &mut std::io::sink());
+                .advance(&mut self.terminal_emulator, byte, &mut self.input);
         }
 
         if let Some(title) = self.terminal_emulator.get_next_title() {
@@ -225,6 +278,17 @@ impl ProcessState {
 
     fn on_exit(&mut self, status: std::process::ExitStatus) {
         self.exit_status = Some(status);
+    }
+
+    fn take_process_input(&mut self) -> Option<bytes::BytesMut> {
+        use std::mem;
+
+        if self.input.is_empty() {
+            None
+        } else {
+            let input = mem::replace(&mut self.input, Vec::new());
+            Some(bytes::BytesMut::from(input))
+        }
     }
 }
 

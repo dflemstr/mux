@@ -5,7 +5,7 @@ authors = ["David Flemström <david.flemstrom@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-tui = { git = "https://github.com/dflemstr/tui-rs.git", branch = "more-styles-and-colors" }
+tui = { git = "https://github.com/dflemstr/tui-rs.git", branch = "mux" }
 vte = "0.3.3"
 structopt = "0.2.14"
 tokio = { version = "0.1.15", features = ["async-await-preview"] }

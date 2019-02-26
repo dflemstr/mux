@@ -141,7 +141,7 @@ async fn run_gui(
     events: impl futures::stream::Stream<Item = ui::Event, Error = failure::Error>,
     args: Vec<String>,
     template_placeholder: String,
-) -> Result<impl futures::Stream<Item = bytes::BytesMut, Error = failure::Error>, failure::Error> {
+) -> Result<impl futures::Stream<Item = ui::Data, Error = failure::Error>, failure::Error> {
     use futures::future::Future;
     use futures::stream::Stream;
 
@@ -154,14 +154,14 @@ async fn run_gui(
         outputs
             .into_iter()
             .enumerate()
-            .map(|(i, o)| o.map(move |b| ui::Event::Output(i, b))),
+            .map(|(i, o)| o.map(move |b| ui::Event::ProcessOutput(i, b))),
     );
 
     let exit = futures::stream::futures_unordered(
         exits
             .into_iter()
             .enumerate()
-            .map(|(i, e)| e.map(move |e| ui::Event::Exit(i, e))),
+            .map(|(i, e)| e.map(move |e| ui::Event::ProcessExit(i, e))),
     );
 
     let events = events.select(output).select(exit);
@@ -201,25 +201,44 @@ fn read_events(
 
     raw_events_stream
         .and_then(move |event| match event? {
-            (event, data) => Ok(ui::Event::Input(event, data.into())),
+            (event, data) => Ok(ui::Event::UserInput(event, data.into())),
         })
         .fuse()
 }
 
 async fn forward_stdin(
     inputs: Vec<process::Write>,
-    stdin: impl futures::stream::Stream<Item = bytes::BytesMut, Error = failure::Error> + Send + 'static,
+    stdin: impl futures::stream::Stream<Item = ui::Data, Error = failure::Error> + Send + 'static,
 ) -> Result<
-    impl futures::stream::Stream<Item = bytes::Bytes, Error = failure::Error> + Send + 'static,
+    impl futures::stream::Stream<Item = (), Error = failure::Error> + Send + 'static,
     failure::Error,
 > {
-    use futures::stream::Stream;
+    use futures::sink::Sink;
 
-    let (rest, _) = await!(stdin
-        .map(bytes::BytesMut::freeze)
-        .forward(sinks::Fanout::new(inputs.into_iter().map(|p| p.input))))?;
+    let (rest, _) = await!(
+        stdin.forward(sinks::Fanout::new(inputs.into_iter().enumerate().map(
+            |(my_index, p)| {
+                p.input
+                    .with_flat_map(move |data| {
+                        futures::stream::iter_ok(match data {
+                            ui::Data::ProcessInputAll { data, .. } => Some(data),
+                            ui::Data::ProcessInput { data, .. } => Some(data),
+                            // TODO: find a way to process other events
+                            _ => None,
+                        })
+                    })
+                    .with_flat_map(move |data: ui::Data| {
+                        futures::stream::iter_ok(if data.matches_index(my_index) {
+                            Some(data)
+                        } else {
+                            None
+                        })
+                    })
+            }
+        )))
+    )?;
 
-    Ok(rest)
+    Ok(rest.map(|_| ()))
 }
 
 async fn create_terminal(
