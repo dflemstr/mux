@@ -138,12 +138,14 @@ async fn run_with_options(mut options: options::Options) -> Result<(), failure::
 async fn run_gui(
     process_reads: Vec<process::Read>,
     terminal: tui::Terminal<impl tui::backend::Backend + 'static>,
-    events: impl futures::stream::Stream<Item = ui::Event, Error = failure::Error>,
+    user_input: impl futures::stream::Stream<Item = ui::Event, Error = failure::Error>,
     args: Vec<String>,
     template_placeholder: String,
-) -> Result<impl futures::Stream<Item = ui::Data, Error = failure::Error>, failure::Error> {
+) -> Result<impl futures::Stream<Item = ui::Action, Error = failure::Error>, failure::Error> {
     use futures::future::Future;
     use futures::stream::Stream;
+    use std::sync;
+    use std::time;
 
     let (outputs, exits): (Vec<_>, Vec<_>) = process_reads
         .into_iter()
@@ -154,7 +156,7 @@ async fn run_gui(
         outputs
             .into_iter()
             .enumerate()
-            .map(|(i, o)| o.map(move |b| ui::Event::ProcessOutput(i, b))),
+            .map(|(i, o)| o.map(move |b| ui::Event::ProcessOutput(i, b.freeze()))),
     );
 
     let exit = futures::stream::futures_unordered(
@@ -164,21 +166,50 @@ async fn run_gui(
             .map(|(i, e)| e.map(move |e| ui::Event::ProcessExit(i, e))),
     );
 
-    let events = events.select(output).select(exit);
+    let processes = args.into_iter().map(|arg| ui::ProcessSettings {
+        initial_title: format!("{}={}", template_placeholder, arg),
+    });
 
-    let mut ui = ui::Ui::new(
-        events,
-        terminal,
-        args.into_iter().map(|arg| ui::ProcessSettings {
-            initial_title: format!("{}={}", template_placeholder, arg),
-        }),
-    );
+    let mut ui = ui::Ui::new(terminal, processes)?;
 
     await!(futures::future::poll_fn(|| tokio_threadpool::blocking(
         || ui.draw()
     )))??;
 
-    Ok(ui.into_frames()?)
+    let ui = sync::Arc::new(sync::Mutex::new(ui));
+
+    let resize_ui = sync::Arc::clone(&ui);
+    let resizes = tokio::timer::Interval::new_interval(time::Duration::from_millis(10))
+        .filter_map(move |_| {
+            if resize_ui.lock().unwrap().check_resized() {
+                Some(ui::Event::Resized)
+            } else {
+                None
+            }
+        })
+        .map_err(failure::Error::from);
+
+    let events = user_input
+        .chain(futures::stream::once(Ok(ui::Event::EndOfUserInput)))
+        .select(output)
+        .select(exit)
+        .select(resizes)
+        .take_while(|e| futures::future::ok(*e != ui::Event::EndOfUserInput));
+
+    Ok(events
+        .and_then(move |event| {
+            let event = sync::Arc::new(event);
+            let ui = sync::Arc::clone(&ui);
+            futures::future::poll_fn(move || {
+                let event = sync::Arc::clone(&event);
+                let ui = sync::Arc::clone(&ui);
+                tokio_threadpool::blocking(move || ui.lock().unwrap().on_event(&event))
+            })
+            .map_err(failure::Error::from)
+            .and_then(|r| r)
+            .map(futures::stream::iter_ok)
+        })
+        .flatten())
 }
 
 fn read_events(
@@ -208,7 +239,7 @@ fn read_events(
 
 async fn forward_stdin(
     inputs: Vec<process::Write>,
-    stdin: impl futures::stream::Stream<Item = ui::Data, Error = failure::Error> + Send + 'static,
+    stdin: impl futures::stream::Stream<Item = ui::Action, Error = failure::Error> + Send + 'static,
 ) -> Result<
     impl futures::stream::Stream<Item = (), Error = failure::Error> + Send + 'static,
     failure::Error,
@@ -221,13 +252,13 @@ async fn forward_stdin(
                 p.input
                     .with_flat_map(move |data| {
                         futures::stream::iter_ok(match data {
-                            ui::Data::ProcessInputAll { data, .. } => Some(data),
-                            ui::Data::ProcessInput { data, .. } => Some(data),
+                            ui::Action::ProcessInputAll { data, .. } => Some(data),
+                            ui::Action::ProcessInput { data, .. } => Some(data),
                             // TODO: find a way to process other events
                             _ => None,
                         })
                     })
-                    .with_flat_map(move |data: ui::Data| {
+                    .with_flat_map(move |data: ui::Action| {
                         futures::stream::iter_ok(if data.matches_index(my_index) {
                             Some(data)
                         } else {

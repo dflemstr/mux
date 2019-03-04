@@ -416,6 +416,7 @@ dependencies = [
  "tokio-pty-process 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-threadpool 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "tui 0.4.0 (git+https://github.com/dflemstr/tui-rs.git?branch=mux)",
+ "unicode-segmentation 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "vte 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

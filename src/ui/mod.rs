@@ -1,25 +1,25 @@
-use std::time;
+mod vertical_tabs;
 
-pub struct Ui<B, E>
+pub struct Ui<B>
 where
     B: tui::backend::Backend,
 {
     state: State,
     terminal: tui::Terminal<B>,
-    events: E,
+    last_size: tui::layout::Rect,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Event {
-    UserInput(termion::event::Event, bytes::BytesMut),
+    UserInput(termion::event::Event, bytes::Bytes),
     EndOfUserInput,
-    ProcessOutput(usize, bytes::BytesMut),
+    ProcessOutput(usize, bytes::Bytes),
     ProcessExit(usize, std::process::ExitStatus),
-    Tick,
+    Resized,
 }
 
 #[derive(Clone, Debug)]
-pub enum Data {
+pub enum Action {
     ProcessInput {
         index: usize,
         data: bytes::Bytes,
@@ -41,6 +41,8 @@ pub struct ProcessSettings {
 
 struct State {
     processes: Vec<ProcessState>,
+    selected: usize,
+    scroll: usize,
 }
 
 struct ProcessState {
@@ -51,122 +53,77 @@ struct ProcessState {
     input: Vec<u8>,
 }
 
-impl<B, E> Ui<B, E>
+impl<B> Ui<B>
 where
     B: tui::backend::Backend + 'static,
-    E: futures::stream::Stream<Item = Event, Error = failure::Error>,
 {
     pub fn new(
-        events: E,
         terminal: tui::Terminal<B>,
         processes: impl IntoIterator<Item = ProcessSettings>,
-    ) -> Self {
+    ) -> Result<Self, failure::Error> {
         let processes = processes
             .into_iter()
             .map(ProcessState::from_settings)
             .collect();
         let state = State::new(processes);
+        let last_size = terminal.size()?;
 
-        Self {
+        Ok(Self {
             state,
             terminal,
-            events,
+            last_size,
+        })
+    }
+
+    pub fn check_resized(&mut self) -> bool {
+        if let Ok(size) = self.terminal.size() {
+            let result = size != self.last_size;
+            self.last_size = size;
+            result
+        } else {
+            false
         }
     }
 
-    pub fn into_frames(
-        self,
-    ) -> Result<impl futures::stream::Stream<Item = Data, Error = failure::Error>, failure::Error>
-    {
-        use futures::stream::Stream;
-        use std::sync;
+    pub fn on_event(&mut self, event: &Event) -> Result<Vec<Action>, failure::Error> {
+        let mut process_input_all = None;
+        let process_input_all_ref = &mut process_input_all;
 
-        let mut last_size = self.terminal.size()?;
-        let state = sync::Arc::new(sync::Mutex::new(self.state));
-        let terminal = sync::Arc::new(sync::Mutex::new(self.terminal));
-
-        let size_terminal = sync::Arc::clone(&terminal);
-        let resizes = tokio::timer::Interval::new_interval(time::Duration::from_millis(10))
-            .filter_map(move |_| {
-                let size_terminal = size_terminal.lock().unwrap();
-                if let Ok(size) = size_terminal.size() {
-                    if size != last_size {
-                        last_size = size;
-                        Some(Event::Tick)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+        let state_ref = &mut self.state;
+        self.terminal.draw(move |mut frame| {
+            match event {
+                Event::ProcessOutput(idx, data) => {
+                    state_ref.on_data(*idx, data.clone());
                 }
-            })
-            .map_err(failure::Error::from);
-
-        let frames = self
-            .events
-            .chain(futures::stream::once(Ok(Event::EndOfUserInput)))
-            .select(resizes)
-            .take_while(|e| futures::future::ok(*e != Event::EndOfUserInput))
-            .and_then(move |event| {
-                use futures::future::Future;
-
-                let state = sync::Arc::clone(&state);
-                let terminal = sync::Arc::clone(&terminal);
-
-                let process_input_all = {
-                    let mut state_guard = state.lock().unwrap();
-                    match event {
-                        Event::ProcessOutput(idx, data) => {
-                            state_guard.on_data(idx, data.freeze());
-                            None
-                        }
-                        Event::ProcessExit(idx, status) => {
-                            state_guard.on_exit(idx, status);
-                            None
-                        }
-                        Event::UserInput(_, data) => Some(data.freeze()),
-                        Event::EndOfUserInput => None,
-                        Event::Tick => None,
+                Event::ProcessExit(idx, status) => {
+                    state_ref.on_exit(*idx, *status);
+                }
+                Event::UserInput(event, user_input) => {
+                    let handled_input = state_ref.on_user_input(frame.size(), event);
+                    if !handled_input {
+                        *process_input_all_ref = Some(user_input.clone());
                     }
-                };
+                }
+                _ => {}
+            };
 
-                let process_inputs = state
-                    .lock()
-                    .unwrap()
+            frame.render(state_ref, frame.size());
+        })?;
+
+        let result = process_input_all
+            .into_iter()
+            .map(|data| Action::ProcessInputAll { data })
+            .chain(
+                self.state
                     .take_process_inputs()
-                    .map(|(i, d)| (i, d.freeze()))
-                    .collect::<Vec<_>>();
+                    .map(|(index, data)| Action::ProcessInput {
+                        index,
+                        data: data.freeze(),
+                    }),
+            )
+            .collect();
 
-                futures::future::poll_fn(move || {
-                    let state = sync::Arc::clone(&state);
-                    let terminal = sync::Arc::clone(&terminal);
-
-                    tokio_threadpool::blocking(move || {
-                        trace!("drawing frame");
-                        let mut terminal_guard = terminal.lock().unwrap();
-                        terminal_guard.draw(move |mut f| {
-                            let mut state_guard = state.lock().unwrap();
-                            f.render(&mut *state_guard, f.size());
-                        })
-                    })
-                })
-                .map_err(failure::Error::from)
-                .map(|_| {
-                    futures::stream::iter_ok(
-                        process_input_all
-                            .into_iter()
-                            .map(|data| Data::ProcessInputAll { data })
-                            .chain(
-                                process_inputs
-                                    .into_iter()
-                                    .map(|(index, data)| Data::ProcessInput { index, data }),
-                            ),
-                    )
-                })
-            })
-            .flatten();
-
-        Ok(frames)
+        Ok(result)
     }
 
     pub fn draw(&mut self) -> Result<(), failure::Error> {
@@ -178,19 +135,25 @@ where
     }
 }
 
-impl Data {
+impl Action {
     pub fn matches_index(&self, other_index: usize) -> bool {
         match *self {
-            Data::ProcessInput { index, .. } => index == other_index,
-            Data::ProcessInputAll { .. } => true,
-            Data::ProcessTermResize { index, .. } => index == other_index,
+            Action::ProcessInput { index, .. } => index == other_index,
+            Action::ProcessInputAll { .. } => true,
+            Action::ProcessTermResize { index, .. } => index == other_index,
         }
     }
 }
 
 impl State {
     fn new(processes: Vec<ProcessState>) -> Self {
-        Self { processes }
+        let selected = 0;
+        let scroll = 0;
+        Self {
+            processes,
+            selected,
+            scroll,
+        }
     }
 
     fn on_data(&mut self, index: usize, data: bytes::Bytes) {
@@ -199,6 +162,73 @@ impl State {
 
     fn on_exit(&mut self, index: usize, status: std::process::ExitStatus) {
         self.processes[index].on_exit(status)
+    }
+
+    fn on_user_input(&mut self, area: tui::layout::Rect, event: &termion::event::Event) -> bool {
+        match *event {
+            termion::event::Event::Key(_) => false,
+            termion::event::Event::Mouse(m) => {
+                let (tabs_area, process_area) = self.layout(area);
+                let (x, y) = mouse_event_coords(&m);
+
+                if contains_point(tabs_area, x, y) {
+                    match self.tabs().on_mouse_event(tabs_area, &m) {
+                        Some(vertical_tabs::MouseAction::Select(selected)) => {
+                            self.selected = selected;
+                        }
+                        Some(vertical_tabs::MouseAction::ScrollUp) => {
+                            self.scroll = 0.max(self.scroll as isize - 1) as usize;
+                        }
+                        Some(vertical_tabs::MouseAction::ScrollDown) => {
+                            self.scroll = ((self.processes.len() as isize - area.height as isize
+                                + 2)
+                            .min(self.scroll as isize)
+                                + 1) as usize;
+                        }
+                        None => {}
+                    }
+                    true
+                } else if contains_point(process_area, x, y) {
+                    self.processes[self.selected].on_user_input(process_area, event)
+                } else {
+                    false
+                }
+            }
+            termion::event::Event::Unsupported(_) => false,
+        }
+    }
+
+    fn layout(&self, area: tui::layout::Rect) -> (tui::layout::Rect, tui::layout::Rect) {
+        let parts = tui::layout::Layout::default()
+            .direction(tui::layout::Direction::Horizontal)
+            .constraints(
+                [
+                    tui::layout::Constraint::Length(40),
+                    tui::layout::Constraint::Percentage(100),
+                ]
+                .as_ref(),
+            )
+            .split(area);
+
+        (parts[0], parts[1])
+    }
+
+    fn tabs(&self) -> vertical_tabs::VerticalTabs {
+        vertical_tabs::VerticalTabs::default()
+            .titles(
+                self.processes
+                    .iter()
+                    .map(|p| p.tab_title())
+                    .collect::<Vec<_>>(),
+            )
+            .block(tui::widgets::Block::default().borders(tui::widgets::Borders::RIGHT))
+            .style(tui::style::Style::default())
+            .highlight_style(
+                tui::style::Style::default()
+                    .modifier(tui::style::Modifier::BOLD | tui::style::Modifier::UNDERLINED),
+            )
+            .select(self.selected)
+            .scroll(self.scroll)
     }
 
     fn take_process_inputs<'a>(
@@ -213,24 +243,11 @@ impl State {
 
 impl tui::widgets::Widget for State {
     fn draw(&mut self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
-        let num_processes = self.processes.len();
+        let (tabs_area, process_area) = self.layout(area);
 
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            clippy::cast_precision_loss
-        )]
-        let chunks = tui::layout::Layout::default()
-            .direction(tui::layout::Direction::Horizontal)
-            .constraints(vec![
-                tui::layout::Constraint::Ratio(1, num_processes as u32);
-                num_processes
-            ])
-            .split(area);
+        self.tabs().draw(tabs_area, buf);
 
-        for (i, process) in self.processes.iter_mut().enumerate() {
-            process.draw(chunks[i], buf);
-        }
+        self.processes[self.selected].draw(process_area, buf);
     }
 }
 
@@ -280,6 +297,10 @@ impl ProcessState {
         self.exit_status = Some(status);
     }
 
+    fn on_user_input(&mut self, _area: tui::layout::Rect, _event: &termion::event::Event) -> bool {
+        true
+    }
+
     fn take_process_input(&mut self) -> Option<bytes::BytesMut> {
         use std::mem;
 
@@ -289,6 +310,33 @@ impl ProcessState {
             let input = mem::replace(&mut self.input, Vec::new());
             Some(bytes::BytesMut::from(input))
         }
+    }
+
+    fn tab_title(&self) -> vertical_tabs::Title {
+        let mut title = vertical_tabs::Title::default()
+            .text(&self.title)
+            .style(tui::style::Style::default());
+
+        if let Some(ref exit_status) = self.exit_status {
+            let style = if exit_status.success() {
+                tui::style::Style::default()
+                    .fg(tui::style::Color::Green)
+                    .modifier(tui::style::Modifier::BOLD)
+            } else {
+                tui::style::Style::default()
+                    .fg(tui::style::Color::Red)
+                    .modifier(tui::style::Modifier::BOLD)
+            };
+            let symbol = if let Some(code) = exit_status.code() {
+                format!("🗙 {}", code).into()
+            } else {
+                "☇".into()
+            };
+
+            title = title.symbols(vec![tui::widgets::Text::Styled(symbol, style)])
+        }
+
+        title
     }
 }
 
@@ -304,20 +352,14 @@ impl tui::widgets::Widget for ProcessState {
         let main_chunk = chunks[0];
         let status_chunk = chunks[1];
 
-        let mut block = tui::widgets::Block::default()
-            .title(&self.title)
-            .borders(tui::widgets::Borders::ALL);
-        block.draw(main_chunk, buf);
-        let inner_area = block.inner(main_chunk);
-
         for cell in self.terminal_emulator.renderable_cells() {
             #[allow(clippy::cast_possible_truncation)]
             let x = cell.column.0 as u16;
             #[allow(clippy::cast_possible_truncation)]
             let y = cell.line.0 as u16;
-            if x < inner_area.width && y < inner_area.height {
-                let x = inner_area.x + x;
-                let y = inner_area.y + y;
+            if x < main_chunk.width && y < main_chunk.height {
+                let x = main_chunk.x + x;
+                let y = main_chunk.y + y;
                 let buf_cell = buf.get_mut(x, y);
                 buf_cell.set_char(cell.chars[0]);
                 buf_cell.set_bg(convert_color(cell.bg));
@@ -349,6 +391,18 @@ impl tui::widgets::Widget for ProcessState {
             .style(style)
             .draw(status_chunk, buf);
         }
+    }
+}
+
+fn contains_point(rect: tui::layout::Rect, x: u16, y: u16) -> bool {
+    rect.x <= x && rect.y <= y && rect.right() > x && rect.bottom() > y
+}
+
+fn mouse_event_coords(event: &termion::event::MouseEvent) -> (u16, u16) {
+    match event {
+        termion::event::MouseEvent::Press(_, x, y) => (x - 1, y - 1),
+        termion::event::MouseEvent::Release(x, y) => (x - 1, y - 1),
+        termion::event::MouseEvent::Hold(x, y) => (x - 1, y - 1),
     }
 }
 
