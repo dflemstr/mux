@@ -11,6 +11,8 @@ them the same input.
 `mux` was written for my personal use in my free time, and as such there is not a super huge focus on code quality or testing.
 The tool is pragmatic and tries to cover common use-cases.
 
+![screenshot](mux.png)
+
 ## Installation
 
 [Install Rust](https://rustup.rs/), then:
