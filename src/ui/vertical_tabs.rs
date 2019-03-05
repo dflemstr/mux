@@ -134,7 +134,7 @@ impl<'a> tui::widgets::Widget for VerticalTabs<'a> {
                 buf.get_mut(x, y).reset();
             }
         }
-        
+
         if let Some(ref mut b) = self.block {
             b.draw(area, buf);
         }
@@ -231,7 +231,9 @@ impl<'a> tui::widgets::Widget for Title<'a> {
             area.width -= char_count as u16 + 1;
         }
 
-        if unicode_segmentation::UnicodeSegmentation::graphemes(self.text, true).count() <= area.width as usize {
+        if unicode_segmentation::UnicodeSegmentation::graphemes(self.text, true).count()
+            <= area.width as usize
+        {
             buf.set_stringn(area.x, area.y, self.text, area.width as usize, self.style);
         } else {
             buf.set_stringn(
