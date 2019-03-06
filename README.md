@@ -26,7 +26,7 @@ Make sure that `~/.cargo/bin` is in your `PATH` (`rustup` usually sets this up a
 
 ## Simple usage
 
-Running `echo '1 2 3' | tmux command arg1 arg2` will start `command arg1 arg2 1`, `command arg1 arg2 2` and `command arg1 arg2 3`
+Running `echo '1 2 3' | mux command arg1 arg2` will start `command arg1 arg2 1`, `command arg1 arg2 2` and `command arg1 arg2 3`
 in parallel.
 
 You use `Ctrl+T` to exit the GUI that pops up.
