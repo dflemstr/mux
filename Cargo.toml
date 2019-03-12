@@ -6,20 +6,20 @@ edition = "2018"
 
 [dependencies]
 vte = "0.3.3"
-structopt = "0.2.14"
-tokio = { version = "0.1.15", features = ["async-await-preview"] }
+structopt = "0.2.15"
+tokio = { version = "0.1.16", features = ["async-await-preview"] }
 failure = "0.1.5"
-bytes = "0.4.11"
+bytes = "0.4.12"
 memchr = "2.2.0"
 futures = "0.1.25"
 log = "0.4.6"
-libc = "0.2.49"
+libc = "0.2.50"
 tokio-async-await = "0.1.6"
 termion = "1.5.1"
-tokio-threadpool = "0.1.11"
+tokio-threadpool = "0.1.12"
 fern = "0.5.7"
 chrono = "0.4.6"
-dirs = "1.0.4"
+dirs = "1.0.5"
 tokio-pty-process = "0.3.1"
 terminal-emulator = { path = "terminal-emulator" }
 log-panics = "2.0.0"

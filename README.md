@@ -18,8 +18,8 @@ The tool is pragmatic and tries to cover common use-cases.
 [Install Rust](https://rustup.rs/), then:
 
 ```
-$ rustup toolchain add nightly-2019-02-24
-$ cargo +nightly-2019-02-24 install --git https://github.com/dflemstr/mux.git
+$ rustup toolchain add nightly-2019-03-11
+$ cargo +nightly-2019-03-11 install --git https://github.com/dflemstr/mux.git
 ```
 
 Make sure that `~/.cargo/bin` is in your `PATH` (`rustup` usually sets this up automatically).
