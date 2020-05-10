@@ -536,6 +536,10 @@ pub struct Cursor {
     charsets: Charsets,
 }
 
+impl Cursor {
+    pub fn attributes(&self) -> Cell { self.template }
+}
+
 pub struct VisualBell {
     /// Visual bell duration
     duration: Duration,
