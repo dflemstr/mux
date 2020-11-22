@@ -124,15 +124,16 @@ impl Cell {
 
     #[inline]
     pub fn chars(&self) -> [char; MAX_ZEROWIDTH_CHARS + 1] {
+        use std::mem::MaybeUninit;
         unsafe {
-            let mut chars = [std::mem::uninitialized(); MAX_ZEROWIDTH_CHARS + 1];
-            std::ptr::write(&mut chars[0], self.c);
+            let mut chars: MaybeUninit<[char; MAX_ZEROWIDTH_CHARS + 1]> = MaybeUninit::uninit();
+            std::ptr::write(chars.as_mut_ptr() as *mut char, self.c);
             std::ptr::copy_nonoverlapping(
                 self.extra.as_ptr(),
-                chars.as_mut_ptr().offset(1),
+                (chars.as_mut_ptr() as *mut char).offset(1),
                 self.extra.len(),
             );
-            chars
+            chars.assume_init()
         }
     }
 
